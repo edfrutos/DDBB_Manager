@@ -1,0 +1,39 @@
+# Byte-compiled Python files
+__pycache__/
+*.py[cod]
+
+# Virtual environment directories
+env/
+venv/
+.venv/
+.env
+
+# macOS filesystem artifacts
+.DS_Store
+
+# IDE and editor folders
+.idea/
+.vscode/
+
+# Log files and databases
+*.log
+*.sqlite3
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Test and coverage caches
+.pytest_cache/
+# Coverage reports
+htmlcov/
+# Nested git repo (historial preservado en docs/history/)
+ddbb_manager/
+
+# Screenshots / binarios
+*.png
+
+# Archivos de entorno no gestionados
+.windsurfrules
+.qodo/
