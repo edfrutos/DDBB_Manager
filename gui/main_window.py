@@ -37,41 +37,172 @@ except ImportError:
     print("PyMongo is required. Install it using: pip install pymongo")
     sys.exit(1)
 class ConnectionDialog(QDialog):
-    """Dialog for MongoDB connection configuration"""
-    
+    """Diálogo de conexión a MongoDB.
+
+    Flujo de dos pasos:
+      1. El usuario introduce (o selecciona de un perfil) la URI y pulsa Conectar.
+      2. El combo de bases de datos se rellena con list_database_names(); el usuario
+         elige una y pulsa OK.
+
+    Perfiles persistidos en ~/.mongodb_manager/connections.json.
+    Interfaz pública: get_connection_data() → {"connection_string": ..., "database": ...}
+    """
+
+    PROFILES_FILE = os.path.join(
+        os.path.expanduser("~"), ".mongodb_manager", "connections.json"
+    )
+
     def __init__(self, parent=None, connection_string=""):
         super().__init__(parent)
         self.setWindowTitle("Conectar a MongoDB")
-        self.resize(400, 200)
-        
-        # Create form layout
-        layout = QFormLayout(self)
-        
-        # Connection string input
-        self.connection_input = QLineEdit(self)
+        self.resize(540, 240)
+        self._client = None
+        self._profiles = self._load_profiles()
+
+        layout = QVBoxLayout(self)
+
+        # ── Perfil guardado ──────────────────────────────────────────
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("Perfil:"))
+        self.profile_combo = QComboBox()
+        self.profile_combo.addItem("(nuevo / sin guardar)")
+        for p in self._profiles:
+            self.profile_combo.addItem(p["name"], p["uri"])
+        self.profile_combo.currentIndexChanged.connect(self._on_profile_selected)
+        profile_row.addWidget(self.profile_combo, 1)
+        layout.addLayout(profile_row)
+
+        # ── URI ──────────────────────────────────────────────────────
+        form = QFormLayout()
+        self.connection_input = QLineEdit()
         self.connection_input.setText(connection_string or "mongodb://localhost:27017/")
-        self.connection_input.setPlaceholderText("mongodb://usuario:contraseña@host:puerto/basededatos")
-        layout.addRow("Cadena de conexión:", self.connection_input)
-        
-        # Database name input
-        self.database_input = QLineEdit(self)
-        self.database_input.setText("app_catalogojoyero")
-        self.database_input.setPlaceholderText("Nombre de la base de datos")
-        layout.addRow("Base de datos:", self.database_input)
-        
-        # Buttons
+        self.connection_input.setPlaceholderText(
+            "mongodb://usuario:contraseña@host:puerto/"
+        )
+        form.addRow("URI:", self.connection_input)
+        layout.addLayout(form)
+
+        # ── Conectar + nombre de perfil opcional ─────────────────────
+        connect_row = QHBoxLayout()
+        self.connect_btn = QPushButton("Conectar")
+        self.connect_btn.clicked.connect(self._do_connect)
+        connect_row.addWidget(self.connect_btn)
+        connect_row.addWidget(QLabel("Guardar como:"))
+        self.profile_name_input = QLineEdit()
+        self.profile_name_input.setPlaceholderText("Nombre del perfil (opcional)")
+        connect_row.addWidget(self.profile_name_input, 1)
+        layout.addLayout(connect_row)
+
+        # ── Selector de base de datos (deshabilitado hasta conectar) ─
+        db_form = QFormLayout()
+        self.db_combo = QComboBox()
+        self.db_combo.setEnabled(False)
+        db_form.addRow("Base de datos:", self.db_combo)
+        layout.addLayout(db_form)
+
+        # ── Botones OK / Cancelar ────────────────────────────────────
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        self.button_box.accepted.connect(self.accept)
+        self._ok_btn = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
+        self._ok_btn.setEnabled(False)
+        self.button_box.accepted.connect(self._on_accept)
         self.button_box.rejected.connect(self.reject)
-        layout.addRow(self.button_box)
-    
+        layout.addWidget(self.button_box)
+
+        # Autoconectar si ya hay URI previa
+        if connection_string:
+            self._do_connect()
+
+    # ── Perfiles ──────────────────────────────────────────────────────
+
+    def _load_profiles(self):
+        try:
+            if os.path.exists(self.PROFILES_FILE):
+                with open(self.PROFILES_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return []
+
+    def _save_profile(self, name, uri):
+        profiles = self._load_profiles()
+        for p in profiles:
+            if p["name"] == name:
+                p["uri"] = uri
+                break
+        else:
+            profiles.append({"name": name, "uri": uri})
+        os.makedirs(os.path.dirname(self.PROFILES_FILE), exist_ok=True)
+        with open(self.PROFILES_FILE, "w", encoding="utf-8") as f:
+            json.dump(profiles, f, indent=2, ensure_ascii=False)
+
+    def _on_profile_selected(self, index):
+        if index > 0:
+            uri = self.profile_combo.itemData(index)
+            if uri:
+                self.connection_input.setText(uri)
+
+    # ── Conexión ──────────────────────────────────────────────────────
+
+    def _do_connect(self):
+        uri = self.connection_input.text().strip()
+        if not uri:
+            QMessageBox.warning(self, "Advertencia", "Introduce una URI de conexión.")
+            return
+
+        self.connect_btn.setEnabled(False)
+        self.connect_btn.setText("Conectando…")
+        QApplication.processEvents()
+
+        try:
+            if self._client:
+                try:
+                    self._client.close()
+                except Exception:
+                    pass
+            client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            client.admin.command("ping")
+            self._client = client
+
+            databases = client.list_database_names()
+            self.db_combo.clear()
+            self.db_combo.addItems(databases)
+            self.db_combo.setEnabled(True)
+            self._ok_btn.setEnabled(True)
+            self.connect_btn.setText("Reconectar")
+
+            profile_name = self.profile_name_input.text().strip()
+            if profile_name:
+                self._save_profile(profile_name, uri)
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Error de conexión", f"No se pudo conectar:\n{exc}"
+            )
+            self.connect_btn.setText("Conectar")
+        finally:
+            self.connect_btn.setEnabled(True)
+
+    def _on_accept(self):
+        if not self._client or not self.db_combo.isEnabled():
+            QMessageBox.warning(self, "Sin conexión", "Conecta primero antes de aceptar.")
+            return
+        self.accept()
+
     def get_connection_data(self):
         return {
-            "connection_string": self.connection_input.text(),
-            "database": self.database_input.text()
+            "connection_string": self.connection_input.text().strip(),
+            "database": self.db_combo.currentText(),
         }
+
+    def closeEvent(self, event):
+        if self._client and self.result() != QDialog.DialogCode.Accepted:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+        super().closeEvent(event)
 class MainWindow(QMainWindow):
     """Main application window for MongoDB database management"""
     

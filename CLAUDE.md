@@ -4,73 +4,61 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Qué es este repositorio
 
-Herramienta de administración de MongoDB (local y Atlas) escrita en Python: conexión, CRUD de documentos, gestión de bases de datos/colecciones/índices, verificación de integridad, estadísticas, gestión de usuarios y limpieza/optimización. La configuración de conexión se lee de un archivo `.env` (variables `MONGODB_URI`, `MONGODB_DATABASE`, etc.) vía `python-dotenv`.
+Herramienta de administración de MongoDB (local y Atlas) escrita en Python con interfaz gráfica PyQt6. Permite conexión, CRUD de documentos, gestión de bases de datos/colecciones/índices, verificación de integridad, estadísticas, gestión de usuarios y limpieza/optimización. Destino: app de escritorio macOS.
 
-## Arquitectura: dos bases de código independientes (clave)
+## Estructura del proyecto
 
-El repositorio contiene **dos implementaciones que NO comparten código**. Identifica siempre en cuál estás trabajando antes de editar.
+```
+DDBB_Manager/
+├── main_gui.py              # Punto de entrada (PyQt6)
+├── gui/
+│   └── main_window.py       # MainWindow (~6900 líneas): toda la UI PyQt6
+├── core/
+│   ├── db_manager.py        # DatabaseManager: motor CLI sin UI (referencia)
+│   └── importer.py          # ImportadorCatalogo: importación Excel/CSV con pandas
+├── docs/
+│   └── history/
+│       └── ddbb_manager_develop.bundle  # Bundle git del subproyecto original
+├── requirements.txt         # PyQt6, pymongo, python-dotenv, tqdm, pandas, tabulate
+├── venv/                    # Python 3.12 (usar este para ejecutar)
+└── .env                     # MONGODB_URI, MONGODB_DATABASE (credenciales reales, no subir)
+```
 
-### 1. `ddbb_manager/` — proyecto mantenido (el "de verdad")
+## Clases principales
 
-Es el único directorio con control de versiones propio (`ddbb_manager/.git`, rama activa `develop`, con CI y pre-commit). venv de Python **3.13**.
+### `gui/main_window.py`
 
-- **`ddbb_manager/ddbb_manager.py`** (~4250 líneas): el núcleo. La clase **`DatabaseManager`** concentra toda la lógica de negocio (`connect`, `set_database`, CRUD, `create_index`/`list_indexes`/`drop_index`, `verify_collection_integrity`, `get_database_statistics`, `get_user_databases`, `cleanup_user_databases`, `export_collection`/`import_collection`, gestión de usuarios y permisos). Al final, `main()` monta un menú de texto interactivo con `argparse` (`--uri`, `--db`, `--debug`). **La lógica va en la clase; el menú solo la invoca.**
-- **`ddbb_manager/ddbb_manager_gui.py`**: GUI en **Tkinter** que importa y envuelve `DatabaseManager` (`from ddbb_manager import DatabaseManager`). Es la capa de presentación del núcleo anterior.
+- **`ConnectionDialog`** (línea ~39): diálogo de dos pasos — URI + perfiles guardados en `~/.mongodb_manager/connections.json` → conecta → combo de BD poblado con `list_database_names()`. Interfaz pública: `get_connection_data()` → `{"connection_string": ..., "database": ...}`.
+- **`MainWindow`** (línea ~195): ventana principal con 87 métodos. Mantiene su propia conexión pymongo (`self.client`, `self.db`). Métodos de mantenimiento: `maintain_collections` → `execute_maintenance` → `schedule_maintenance_task`.
+- La clase escribe en la colección `audit_log` (solo en esta GUI, no en `DatabaseManager`).
 
-### 2. Raíz del repo — GUIs alternativas, utilidades y legado (SIN git)
+### `core/db_manager.py`
 
-El directorio padre no está bajo control de versiones. Aquí conviven una GUI activa, scripts sueltos y código antiguo:
-
-- **`main_gui.py` + `gui/main_window.py`**: GUI de escritorio en **PyQt6** (`MainWindow`, ~7500 líneas). Punto de entrada = `main_gui.py`. **Reimplementa su propia conexión pymongo** (`self.client`, `self.db`) y **no reutiliza `DatabaseManager`**. Es la única parte que lee/escribe la colección `audit_log`.
-- **`conexion-mongodb-atlas.py`**: herramienta PyQt6 independiente (`ImportadorCatalogo`) para importar catálogos desde Excel/CSV con `pandas`.
-- **Utilidades sueltas** (scripts standalone, cada uno con su `main()`/`__main__` y su propia conexión pymongo): `check_indexes.py`, `create_user_indexes.py`, `normalize_users.py`, `verify_users_migration.py`.
-- **Tests**: `test_connection.py`, `test_user_searches.py` (funciones `test_*`, descubribles por pytest; **requieren una conexión MongoDB real**).
-- **`gui_app.py`**: GUI Tkinter legada; importa `db_management_tool.DatabaseManager`, módulo que solo existe en `backup/`, así que **no funciona tal cual**. Tratar como legado.
-- **`main_gui_copia.py`**, **`main_window.py` duplicados**, **`backup/`**, **`respaldos/`**: copias y respaldos antiguos. **No editar**; son referencia histórica.
+Clase `DatabaseManager` con lógica de negocio: `connect`, `set_database`, CRUD, `create_index`/`list_indexes`/`drop_index`, `verify_collection_integrity`, `get_database_statistics`, `get_user_databases`, `cleanup_user_databases`, `export_collection`/`import_collection`, gestión de usuarios. **No importado por la GUI aún** — referencia para futura unificación de capas.
 
 ## Comandos habituales
 
 ```bash
-# --- Núcleo CLI (subproyecto ddbb_manager) ---
-cd ddbb_manager
-python ddbb_manager.py                 # menú interactivo de texto
-python ddbb_manager.py --uri "mongodb+srv://..." --db mibd --debug
-python ddbb_manager_gui.py             # GUI Tkinter sobre DatabaseManager
+# Ejecutar la aplicación
+source venv/bin/activate
+python main_gui.py
 
-# --- GUI PyQt6 (raíz) ---
-python main_gui.py                     # aplicación de escritorio principal (PyQt6)
-python conexion-mongodb-atlas.py       # importador de catálogos Excel/CSV
+# Verificar sintaxis sin ejecutar
+venv/bin/python -m py_compile gui/main_window.py
 
-# --- Utilidades de mantenimiento (raíz) ---
-python create_user_indexes.py          # crear/recrear índices de usuarios
-python check_indexes.py                # inspeccionar índices y campos
-python normalize_users.py              # normalizar documentos de usuarios
-python verify_users_migration.py       # verificar migración de usuarios
-
-# --- Tests (necesitan MongoDB accesible vía .env) ---
-pytest                                 # descubre test_connection.py y test_user_searches.py
-python test_connection.py              # comprobar conexión de forma directa
-pytest test_user_searches.py::test_email_search   # un solo test
-
-# --- Lint / formato (config en ddbb_manager/) ---
-cd ddbb_manager
-pre-commit run --all-files             # black + isort + flake8 + hooks básicos
+# Instalar dependencias en el venv
+venv/bin/pip install -r requirements.txt
 ```
 
-## Entornos y dependencias
+## Entorno
 
-- Hay **dos venv distintos**: raíz (Python **3.10**) y `ddbb_manager/venv` (Python **3.13**). Usa el que corresponda a la parte que estés tocando.
-- `requirements.txt` (raíz) cubre lo básico: `pymongo`, `python-dotenv`, `tqdm`, `PyQt6`. El subproyecto `ddbb_manager/` **no tiene requirements propio** y depende del de la raíz.
-- Dependencias usadas por el código pero **ausentes** de `requirements.txt` (instalar aparte si trabajas con esos módulos): `pandas` (importador de catálogos) y `tabulate` (tests de búsqueda).
-
-## Calidad de código y CI
-
-- El linting solo está configurado dentro de `ddbb_manager/` (`.pre-commit-config.yaml`): `black`, `isort`, `flake8` y hooks de whitespace/EOF/YAML. Sigue **PEP 8** y respeta `black`/`isort` al modificar ese subproyecto.
-- El workflow `ddbb_manager/.github/workflows/ci.yml` ejecuta `pre-commit run --all-files` en push/PR a `master` y `develop`. **No hay tests en CI**; solo lint.
+- **Python 3.12** en `venv/` (el único intérprete con PyQt6 disponible en este sistema)
+- El `.env` contiene `MONGODB_URI` con credenciales reales de MongoDB Atlas — **no subir, no volcar en logs**
+- Perfiles de conexión guardados en `~/.mongodb_manager/connections.json`
 
 ## Convenciones y avisos
 
-- **Idioma del dominio**: identificadores, menús y comentarios están en español, a veces sin tildes (`accion`, `contrasena`, `direccion`, `telefono`, `movil`, `isdeleted` — ver `.vscode/settings.json`). Mantén ese estilo al añadir código.
-- **Operaciones destructivas**: `drop_collection`, `drop_database`, `cleanup_user_databases`, `delete_document` borran datos de forma irreversible. Conserva las confirmaciones existentes antes de ejecutarlas.
-- El `.env` contiene credenciales reales de MongoDB Atlas y **no debe** subirse ni volcarse en logs/salida.
-- Antes de editar, confirma que el archivo no es una copia de `backup/`, `respaldos/` o un `*_copia.py`: hay varias versiones casi idénticas del mismo código repartidas por el repo.
+- **Idioma del dominio**: identificadores, menús y comentarios en español (a veces sin tildes: `accion`, `contrasena`, `direccion`, `telefono`). Mantener al añadir código.
+- **Operaciones destructivas**: `drop_collection`, `drop_database`, `cleanup_user_databases`, `delete_document` borran datos de forma irreversible. Conservar todas las confirmaciones existentes.
+- Los warnings de Pyright sobre imports de PyQt6/pymongo son esperados cuando el linter usa el Python del sistema (3.14) en lugar del venv (3.12).
+- `core/` existe para futura integración incremental. No modificar `core/db_manager.py` para cambios en la GUI — son capas independientes hasta que se fusionen explícitamente.

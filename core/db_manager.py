@@ -217,6 +217,40 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error al listar bases de datos: {e}")
             return []
+    
+    def create_database(self, database_name):
+        """
+        Crea una nueva base de datos. En MongoDB, la base de datos se crea al crear la primera colección.
+        Se crea y elimina una colección temporal para inicializar la base de datos.
+        """
+        if self.client is None:
+            logger.error("No hay conexión a MongoDB")
+            return False
+        try:
+            temp_coll = "_init_collection"
+            db = self.client[database_name]
+            db.create_collection(temp_coll)
+            db.drop_collection(temp_coll)
+            logger.info(f"Base de datos creada: {database_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error al crear la base de datos: {e}")
+            return False
+
+    def drop_database(self, database_name):
+        """
+        Elimina una base de datos completa.
+        """
+        if self.client is None:
+            logger.error("No hay conexión a MongoDB")
+            return False
+        try:
+            self.client.drop_database(database_name)
+            logger.info(f"Base de datos eliminada: {database_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error al eliminar la base de datos: {e}")
+            return False
 
     def list_collections(self):
         """
@@ -2315,17 +2349,17 @@ def handle_user_management(db_manager):
     Args:
         db_manager: Instancia de DatabaseManager.
     """
-    print("\n--- GESTIÓN DE USUARIOS ---")
-    print("1. Listar todos los usuarios")
-    print("2. Buscar usuario por ID")
-    print("3. Buscar usuario por nombre")
-    print("4. Editar usuario")
-    print("5. Eliminar usuario")
-    print("0. Volver al menú principal")
-    choice = input("Seleccione una opción: ")
-    
     try:
-        # Detectar colecciones de usuarios
+        print("\n--- GESTIÓN DE USUARIOS ---")
+        print("1. Listar todos los usuarios")
+        print("2. Buscar usuario por ID")
+        print("3. Buscar usuario por nombre")
+        print("4. Editar usuario")
+        print("5. Eliminar usuario")
+        print("6. Gestionar contraseña")
+        print("7. Limpiar campos duplicados")
+        print("0. Volver al menú principal")
+        choice = input("Seleccione una opción: ")
         user_collections = db_manager.detect_user_collections()
         if not user_collections:
             print("\nNo se detectaron colecciones de usuarios en la base de datos.")
@@ -2435,6 +2469,104 @@ def handle_user_management(db_manager):
                 print(f"Colecciones verificadas: {', '.join(user_collections)}")
         
         elif choice == "4":
+            # Definición de la estructura canónica de usuarios
+            USER_SCHEMA = {
+                'nombre': {
+                    'aliases': ['name', 'username'],
+                    'type': str
+                },
+                'email': {
+                    'aliases': [],
+                    'type': str
+                },
+                'role': {
+                    'aliases': ['rol'],
+                    'type': str,
+                    'values': ['admin', 'normal']
+                },
+                'edad': {
+                    'aliases': ['age'],
+                    'type': int
+                }
+            }
+
+            def clean_user_fields(user_doc):
+                """Limpia campos duplicados y normaliza la estructura del documento."""
+                update_ops = {
+                    "$set": {},
+                    "$unset": {}
+                }
+                
+                # Procesar cada campo canónico
+                for canonical_field, config in USER_SCHEMA.items():
+                    # Recolectar todos los valores presentes (campo canónico y aliases)
+                    present_values = []
+                    if canonical_field in user_doc:
+                        present_values.append((canonical_field, user_doc[canonical_field]))
+                    for alias in config['aliases']:
+                        if alias in user_doc:
+                            present_values.append((alias, user_doc[alias]))
+                    
+                    # Si hay valores, usar el último valor válido
+                    if present_values:
+                        latest_value = present_values[-1][1]
+                        # Establecer el campo canónico
+                        update_ops["$set"][canonical_field] = latest_value
+                        # Eliminar todos los aliases
+                        for alias in config['aliases']:
+                            if alias in user_doc:
+                                update_ops["$unset"][alias] = ""
+                        
+                        # Tratamiento especial para roles
+                        if canonical_field == 'role':
+                            # Eliminar otros campos de rol
+                            update_ops["$unset"]["roles"] = ""
+                            update_ops["$unset"]["isAdmin"] = ""
+                            update_ops["$unset"]["is_admin"] = ""
+                
+                return update_ops
+
+            def update_user_field(collection_name, user_id, field, value):
+                """Actualiza un campo de usuario manteniendo la consistencia."""
+                # Encontrar el campo canónico
+                canonical_field = field
+                for cf, config in USER_SCHEMA.items():
+                    if field in config['aliases']:
+                        canonical_field = cf
+                        break
+                
+                # Validar el valor según el esquema
+                if canonical_field in USER_SCHEMA:
+                    schema = USER_SCHEMA[canonical_field]
+                    try:
+                        # Convertir al tipo correcto
+                        typed_value = schema['type'](value)
+                        # Validar valores permitidos si están definidos
+                        if 'values' in schema and typed_value not in schema['values']:
+                            raise ValueError(f"Valor no permitido. Debe ser uno de: {schema['values']}")
+                        
+                        # Construir la actualización
+                        update = {
+                            "$set": {canonical_field: typed_value},
+                            "$unset": {}
+                        }
+                        
+                        # Eliminar campos alias
+                        for alias in schema['aliases']:
+                            update["$unset"][alias] = ""
+                        
+                        # Ejecutar la actualización
+                        modified = db_manager.update_document(collection_name, {"_id": user_id}, update)
+                        return modified, canonical_field
+                        
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"Error de validación: {str(e)}")
+                else:
+                    # Campo no definido en el esquema
+                    update = {"$set": {field: value}}
+                    modified = db_manager.update_document(collection_name, {"_id": user_id}, update)
+                    return modified, field
+
             user_id = input("ID del usuario a editar: ")
             if not user_id.strip():
                 print("Debe especificar un ID de usuario.")
@@ -2470,7 +2602,7 @@ def handle_user_management(db_manager):
                 
                 field = input("Campo a modificar: ")
                 if not field:
-                    print("Debe especificar un campo a modificar.")
+                    print("Volviendo al menú de base de datos...")
                     return
                     
                 # Campos especiales que requieren validación adicional
@@ -2485,7 +2617,7 @@ def handle_user_management(db_manager):
                 
                 new_value = input(f"Nuevo valor para {field}: ")
                 
-                # Procesar tipos de datos específicos
+                # Procesar tipos de datos específicos para campos especiales
                 processed_value = new_value
                 if field in ["age", "edad"]:
                     try:
@@ -2506,32 +2638,57 @@ def handle_user_management(db_manager):
                     print("Operación cancelada.")
                     return
                 
-                update = {"$set": {field: processed_value}}
-                # Usar la colección donde se encontró el usuario
-                modified = db_manager.update_document(collection_name, {"_id": user.get("_id")}, update)
-                if modified:
-                    print(f"Usuario actualizado correctamente en colección '{collection_name}'.")
-                    logger.info(f"Usuario actualizado: ID {user_id}, campo {field}, colección {collection_name}")
-                else:
-                    print("No se pudo actualizar el usuario.")
-                    logger.warning(f"Fallo al actualizar usuario: ID {user_id}, campo {field}, colección {collection_name}")
+                try:
+                    # Primero, limpiar campos duplicados
+                    clean_ops = clean_user_fields(user)
+                    if clean_ops["$set"] or clean_ops["$unset"]:
+                        clean_result = db_manager.update_document(collection_name, {"_id": user.get("_id")}, clean_ops)
+                        if clean_result:
+                            logger.info(f"Campos unificados para usuario ID {user_id} en colección {collection_name}")
+                            
+                            # Recargar usuario con campos limpios
+                            updated_user, _ = db_manager.get_user_by_id(user_id)
+                            if updated_user:
+                                user = updated_user
+                        
+                    # Luego, realizar la actualización solicitada
+                    modified, final_field = update_user_field(collection_name, user.get("_id"), field, processed_value)
+                    
+                    if modified:
+                        print(f"Usuario actualizado correctamente en colección '{collection_name}'.")
+                        if final_field == 'role':
+                            if processed_value.lower() == 'admin':
+                                print("\nATENCIÓN: Se han otorgado permisos de administrador al usuario.")
+                                print("El usuario tendrá acceso completo a la gestión del sistema.")
+                                logger.info(f"Permisos de administrador otorgados a usuario: ID {user_id}")
+                                
+                                # Asegurar que se eliminan campos duplicados de rol
+                                cleanup_update = {
+                                    "$unset": {
+                                        "rol": "",
+                                        "roles": ""
+                                    }
+                                }
+                                db_manager.update_document(collection_name, {"_id": user.get("_id")}, cleanup_update)
+                except Exception as e:
+                    print(f"Error al actualizar usuario: {e}")
+                    logger.error(f"Excepción al actualizar usuario: ID {user_id}, error: {e}")
             except Exception as e:
-                print(f"Error al actualizar usuario: {e}")
-                logger.error(f"Excepción al actualizar usuario: ID {user_id}, error: {e}")
-        
-        elif choice == "5":
-            user_id = input("ID del usuario a eliminar: ")
-            if not user_id.strip():
-                print("Debe especificar un ID de usuario.")
-                return
-            
-            # Verificar permisos antes de eliminar
-            if not db_manager.check_role_permissions(["admin", "userAdmin"]):
-                print("Error: No tiene permisos suficientes para eliminar usuarios.")
-                logger.warning(f"Intento de eliminar usuario sin permisos suficientes: ID {user_id}")
+                print(f"Error general al editar usuario: {e}")
+                logger.error(f"Error general en edición de usuario: {e}")
                 return
                 
+        elif choice == "5":
             try:
+                user_id =                 print("Debe especificar un ID de usuario.")
+                return
+                
+                # Verificar permisos antes de eliminar
+                if not db_manager.check_role_permissions(["admin", "userAdmin"]):
+                    print("Error: No tiene permisos suficientes para eliminar usuarios.")
+                    logger.warning(f"Intento de eliminar usuario sin permisos suficientes: ID {user_id}")
+                    return
+                    
                 user, collection_name = db_manager.get_user_by_id(user_id)
                 if not user or not collection_name:
                     print("Usuario no encontrado.")
@@ -2567,6 +2724,7 @@ def handle_user_management(db_manager):
             except Exception as e:
                 print(f"Error al eliminar usuario: {e}")
                 logger.error(f"Excepción al eliminar usuario: ID {user_id}, error: {e}")
+                return
         
         elif choice == "0":
             return
@@ -2575,7 +2733,7 @@ def handle_user_management(db_manager):
     except Exception as e:
         logger.error(f"Error en la gestión de usuarios: {e}")
         print(f"Error: {e}")
-
+        return
 print("MONGODB_URI:", os.environ.get("MONGODB_URI"))
 
 def database_menu(db_manager):
@@ -2605,6 +2763,9 @@ def database_menu(db_manager):
             print("7. Crear índices")
             print("8. Estadísticas")
             print("9. Gestión de usuarios")
+            print("10. Crear colección")
+            print("11. Renombrar colección")
+            print("12. Copia de seguridad de colección")
             print("0. Volver al menú principal")
             print("=" * 50)
             
@@ -2788,6 +2949,42 @@ def database_menu(db_manager):
             elif choice == "9":
                 # Gestión de usuarios
                 user_management_menu(db_manager)
+            elif choice == "10":
+                # Crear nueva colección
+                collection_name = input("Nombre de la nueva colección: ").strip()
+                if not collection_name:
+                    print("Operación cancelada: nombre de colección vacío.")
+                else:
+                    if db_manager.create_collection(collection_name):
+                        print(f"Colección '{collection_name}' creada con éxito.")
+                    else:
+                        print(f"Error al crear la colección '{collection_name}'.")
+            elif choice == "11":
+                # Renombrar colección
+                old_name = input("Nombre de la colección actual: ").strip()
+                new_name = input("Nuevo nombre para la colección: ").strip()
+                if not old_name or not new_name:
+                    print("Operación cancelada: nombre de colección inválido.")
+                else:
+                    confirm = input(f"¿Confirma renombrar '{old_name}' a '{new_name}'? (s/n): ").lower()
+                    if confirm == "s":
+                        if db_manager.rename_collection(old_name, new_name):
+                            print(f"Colección renombrada de '{old_name}' a '{new_name}'.")
+                        else:
+                            print(f"Error al renombrar la colección '{old_name}'.")
+                    else:
+                        print("Renombrado cancelado.")
+            elif choice == "12":
+                # Copia de seguridad de colección
+                collection_name = input("Nombre de la colección a respaldar: ").strip()
+                if not collection_name:
+                    print("Operación cancelada: nombre de colección vacío.")
+                else:
+                    backup_name = db_manager.backup_collection(collection_name)
+                    if backup_name:
+                        print(f"Copia de seguridad creada: '{backup_name}'.")
+                    else:
+                        print(f"No se pudo crear copia de seguridad de '{collection_name}'.")
             else:
                 print("Opción no válida.")
                 
@@ -3217,6 +3414,7 @@ def user_management_menu(db_manager):
             print("4. Editar usuario")
             print("5. Eliminar usuario")
             print("6. Gestionar contraseña")  # Nueva opción
+            print("7. Limpiar campos duplicados") # Nueva opción
             print("0. Volver al menú de base de datos")
             choice = input("Seleccione una opción: ").strip()
             
@@ -3492,7 +3690,6 @@ def user_management_menu(db_manager):
                 except Exception as e:
                     print(f"Error al eliminar usuario: {e}")
                     logger.error(f"Excepción al eliminar usuario: ID {user_id}, error: {e}")
-                    input("\nPresione Enter para continuar...")
             
             elif choice == "6":
                 # Gestión de contraseña
@@ -3563,6 +3760,188 @@ def user_management_menu(db_manager):
                 except Exception as e:
                     print(f"Error al gestionar contraseña: {e}")
                     logger.error(f"Error en gestión de contraseña: {e}")
+            elif choice == "7":
+                # Limpiar campos duplicados en documentos de usuario
+                print("\n=== LIMPIEZA DE CAMPOS DUPLICADOS ===")
+                print("Esta operación unificará campos duplicados en documentos de usuario.")
+                print("Ejemplos: 'name'/'nombre', 'role'/'rol', etc.")
+                
+                # Definir mapeo de campos canónicos
+                field_mapping = {
+                    'nombre': ['name', 'username'],
+                    'role': ['rol'],
+                    'edad': ['age']
+                }
+                
+                # Preguntar si se quiere limpiar todos los usuarios o uno específico
+                scope = input("¿Limpiar todos los usuarios o un usuario específico? (todos/uno): ").lower()
+                
+                if scope == "uno":
+                    # Limpiar un usuario específico
+                    user_id = input("ID del usuario a limpiar: ")
+                    if not user_id.strip():
+                        print("Debe especificar un ID de usuario.")
+                        input("\nPresione Enter para continuar...")
+                        continue
+                        
+                    try:
+                        user, collection_name = db_manager.get_user_by_id(user_id)
+                        if not user or not collection_name:
+                            print("Usuario no encontrado.")
+                            input("\nPresione Enter para continuar...")
+                            continue
+                            
+                        print(f"\nDatos actuales del usuario (colección '{collection_name}'):")
+                        print(serialize_to_json(user))
+                        
+                        # Limpiar campos
+                        update_ops = {
+                            "$set": {},
+                            "$unset": {}
+                        }
+                        
+                        # Procesar cada campo y sus equivalentes
+                        for canonical_field, aliases in field_mapping.items():
+                            values = []
+                            # Recolectar todos los valores existentes
+                            if canonical_field in user:
+                                values.append((canonical_field, user[canonical_field]))
+                            for alias in aliases:
+                                if alias in user:
+                                    values.append((alias, user[alias]))
+                            
+                            # Si hay valores, usar el último y eliminar los demás
+                            if values:
+                                latest_field, latest_value = values[-1]
+                                update_ops["$set"][canonical_field] = latest_value
+                                # Eliminar todos los campos excepto el canónico
+                                for field, _ in values:
+                                    if field != canonical_field:
+                                        update_ops["$unset"][field] = ""
+                        
+                        # Tratamiento especial para roles
+                        if "role" in update_ops["$set"] and update_ops["$set"]["role"].lower() == "admin":
+                            # Eliminar campos adicionales de rol
+                            update_ops["$unset"]["roles"] = ""
+                            update_ops["$unset"]["isAdmin"] = ""
+                            update_ops["$unset"]["is_admin"] = ""
+                        
+                        # Confirmar cambios
+                        if update_ops["$set"] or update_ops["$unset"]:
+                            print("\nCambios a realizar:")
+                            if update_ops["$set"]:
+                                print("Campos a establecer:")
+                                for field, value in update_ops["$set"].items():
+                                    print(f"  - {field}: {value}")
+                            if update_ops["$unset"]:
+                                print("Campos a eliminar:")
+                                for field in update_ops["$unset"].keys():
+                                    print(f"  - {field}")
+                                    
+                            confirm = input("\n¿Confirma estos cambios? (s/n): ")
+                            if confirm.lower() != 's':
+                                print("Operación cancelada.")
+                                input("\nPresione Enter para continuar...")
+                                continue
+                                
+                            # Ejecutar la actualización
+                            modified = db_manager.update_document(collection_name, {"_id": user["_id"]}, update_ops)
+                            if modified:
+                                print("Campos unificados correctamente.")
+                                logger.info(f"Campos unificados para usuario {user_id} en {collection_name}")
+                                
+                                # Mostrar documento actualizado
+                                updated_user, _ = db_manager.get_user_by_id(user_id)
+                                if updated_user:
+                                    print("\nDocumento actualizado:")
+                                    print(serialize_to_json(updated_user))
+                            else:
+                                print("No se pudieron unificar los campos.")
+                                logger.warning(f"Fallo al unificar campos para usuario {user_id} en {collection_name}")
+                        else:
+                            print("No se detectaron campos duplicados que requieran limpieza.")
+                    except Exception as e:
+                        print(f"Error al limpiar campos: {e}")
+                        logger.error(f"Error al limpiar campos para usuario {user_id}: {e}")
+                
+                elif scope == "todos":
+                    # Limpiar todos los usuarios en todas las colecciones
+                    confirm = input("¿Está seguro de limpiar todos los usuarios? Esta operación puede afectar a muchos documentos. (s/n): ")
+                    if confirm.lower() != 's':
+                        print("Operación cancelada.")
+                        input("\nPresione Enter para continuar...")
+                        continue
+                        
+                    total_processed = 0
+                    total_modified = 0
+                    errors = 0
+                    
+                    for collection_name in user_collections:
+                        try:
+                            users = db_manager.find_documents(collection_name, {}, limit=0)
+                            collection_processed = 0
+                            collection_modified = 0
+                            
+                            print(f"\nProcesando colección '{collection_name}' ({len(users)} usuarios)...")
+                            
+                            for user in users:
+                                try:
+                                    total_processed += 1
+                                    collection_processed += 1
+                                    
+                                    # Limpiar campos
+                                    update_ops = {
+                                        "$set": {},
+                                        "$unset": {}
+                                    }
+                                    
+                                    # Procesar cada campo y sus equivalentes
+                                    for canonical_field, aliases in field_mapping.items():
+                                        values = []
+                                        # Recolectar todos los valores existentes
+                                        if canonical_field in user:
+                                            values.append((canonical_field, user[canonical_field]))
+                                        for alias in aliases:
+                                            if alias in user:
+                                                values.append((alias, user[alias]))
+                                        
+                                        # Si hay valores, usar el último y eliminar los demás
+                                        if values:
+                                            latest_field, latest_value = values[-1]
+                                            update_ops["$set"][canonical_field] = latest_value
+                                            # Eliminar todos los campos excepto el canónico
+                                            for field, _ in values:
+                                                if field != canonical_field:
+                                                    update_ops["$unset"][field] = ""
+                                    
+                                    # Tratamiento especial para roles
+                                    if "role" in update_ops["$set"] and update_ops["$set"]["role"].lower() == "admin":
+                                        update_ops["$unset"]["roles"] = ""
+                                        update_ops["$unset"]["isAdmin"] = ""
+                                        update_ops["$unset"]["is_admin"] = ""
+                                    
+                                    # Ejecutar la actualización si hay cambios
+                                    if update_ops["$set"] or update_ops["$unset"]:
+                                        modified = db_manager.update_document(collection_name, {"_id": user["_id"]}, update_ops)
+                                        if modified:
+                                            total_modified += 1
+                                            collection_modified += 1
+                                except Exception as e:
+                                    errors += 1
+                                    logger.error(f"Error al limpiar campos para usuario {user.get('_id')}: {e}")
+                            
+                            print(f"Colección '{collection_name}': {collection_processed} procesados, {collection_modified} modificados")
+                            
+                        except Exception as e:
+                            errors += 1
+                            logger.error(f"Error al procesar colección {collection_name}: {e}")
+                    
+                    print(f"\nResumen de limpieza:")
+                    print(f"Total usuarios procesados: {total_processed}")
+                    print(f"Total usuarios modificados: {total_modified}")
+                    print(f"Errores encontrados: {errors}")
+                else:
+                    print("Operación cancelada. No se realizó ninguna limpieza.")
             elif choice == "0":
                 return
             else:
