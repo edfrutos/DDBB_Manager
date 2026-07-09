@@ -6349,146 +6349,174 @@ Total de bases de datos: {len(databases)}""")
             self.show_status_message(f"Error: {str(e)}", error=True)
             
     def execute_restore(self, backup_dir, metadata, is_full_restore, selected_collections,
-                      conflict_mode, drop_first, dialog):
-        """Ejecutar la restauración con las opciones configuradas"""
+                        conflict_mode, drop_first, dialog):
+        """Ejecutar la restauración con las opciones configuradas."""
         try:
-            # Validar colecciones seleccionadas
-            all_collections = metadata.get('collections', [])
-            
+            all_collections = metadata.get("collections", [])
+
             if not is_full_restore and not selected_collections:
-                QMessageBox.warning(dialog, "Advertencia", "Por favor, seleccione al menos una colección para restaurar")
+                QMessageBox.warning(
+                    dialog, "Advertencia",
+                    "Por favor, seleccione al menos una colección para restaurar"
+                )
                 return
-            
-            collections_to_restore = all_collections if is_full_restore else selected_collections
-            is_compressed = metadata.get('compressed', False)
-            
-            # Crear diálogo de progreso
-            progress_dialog = QProgressDialog("Preparando restauración...", "Cancelar", 0, 100, dialog)
-            progress_dialog.setWindowTitle("Respaldo en progreso")
+
+            collections_to_restore = (
+                all_collections if is_full_restore else selected_collections
+            )
+            is_compressed = metadata.get("compressed", False)
+            total_cols = len(collections_to_restore)
+            collections_dir = os.path.join(backup_dir, "collections")
+            errors = []
+            restored_collections = [0]
+
+            progress_dialog = QProgressDialog(
+                "Preparando restauración...", "Cancelar", 0, 100, dialog
+            )
+            progress_dialog.setWindowTitle("Restauración en progreso")
             progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setAutoClose(False)
             progress_dialog.setAutoReset(False)
             progress_dialog.setValue(0)
-                        
-                    progress_percent = 10 + int((i / total_collections) * 80)
-                    progress_dialog.setValue(progress_percent)
-                    progress_dialog.setLabelText(f"Restaurando colección: {collection_name}...")
-                    
+
+            def perform_restore():
+                for i, collection_name in enumerate(collections_to_restore):
+                    if progress_dialog.wasCanceled():
+                        break
+
+                    pct = 10 + int((i / total_cols) * 80)
+                    progress_dialog.setValue(pct)
+                    progress_dialog.setLabelText(
+                        f"Restaurando colección: {collection_name}..."
+                    )
+
                     try:
-                        # Comprobar si existe el archivo de la colección
-                        collection_file = os.path.join(collections_dir, f"{collection_name}.json")
-                        collection_gz_file = collection_file + '.gz'
-                        
-                        file_exists = os.path.exists(collection_file)
-                        gz_file_exists = os.path.exists(collection_gz_file)
-                        
-                        if not file_exists and not gz_file_exists:
-                            errors.append(f"Archivo de colección '{collection_name}' no encontrado")
+                        col_file = os.path.join(
+                            collections_dir, f"{collection_name}.json"
+                        )
+                        col_gz = col_file + ".gz"
+
+                        if not os.path.exists(col_file) and not os.path.exists(col_gz):
+                            errors.append(
+                                f"Archivo '{collection_name}' no encontrado"
+                            )
                             continue
-                        
-                        # Determinar si debemos eliminar la colección existente
+
                         if drop_first and collection_name in self.db.list_collection_names():
                             self.db.drop_collection(collection_name)
-                        
-                        # Cargar documentos desde el archivo
+
                         documents = []
-                        if is_compressed and gz_file_exists:
-                            with gzip.open(collection_gz_file, 'rt', encoding='utf-8') as f:
+                        if is_compressed and os.path.exists(col_gz):
+                            with gzip.open(col_gz, "rt", encoding="utf-8") as f:
                                 documents = json.load(f)
-                        elif file_exists:
-                            with open(collection_file, 'r', encoding='utf-8') as f:
+                        elif os.path.exists(col_file):
+                            with open(col_file, "r", encoding="utf-8") as f:
                                 documents = json.load(f)
-                        
+
                         if not documents:
-                            errors.append(f"No se encontraron documentos para restaurar en '{collection_name}'")
+                            errors.append(
+                                f"Sin documentos en '{collection_name}'"
+                            )
                             continue
-                        
-                        # Convertir strings de ObjectId de vuelta a ObjectId
+
                         from bson.objectid import ObjectId
                         for doc in documents:
-                            if '_id' in doc and isinstance(doc['_id'], str) and doc['_id'].startswith('ObjectId('):
-                                # Extraer el ID entre paréntesis: ObjectId('...') -> '...'
-                                id_str = doc['_id'].replace("ObjectId('", "").replace("')", "").replace('"', '')
+                            if (
+                                "_id" in doc
+                                and isinstance(doc["_id"], str)
+                                and doc["_id"].startswith("ObjectId(")
+                            ):
+                                id_str = (
+                                    doc["_id"]
+                                    .replace("ObjectId('", "")
+                                    .replace("')", "")
+                                    .replace('"', "")
+                                )
                                 try:
-                                    doc['_id'] = ObjectId(id_str)
-                                except Exception as e:
-                                    print(f"Error convirtiendo ObjectId: {e}")
-                                    continue
-                        
-                        # Insertar documentos en la colección
-                        collection = self.db[collection_name]
-                        try:
-                            collection.insert_many(documents)
-                            restored_collections += 1
-                        except Exception as insert_error:
-                            errors.append(f"Error insertando documentos en '{collection_name}': {str(insert_error)}")
-                            continue
-                                        # Si no se puede convertir, dejarlo como string
-                                        pass
-                            
-                            # Crear o acceder a la colección
-                            collection = self.db[collection_name]
-                            
-                            # Procesar según el modo de conflicto seleccionado
-                            if conflict_mode == 0:  # Reemplazar documentos existentes
-                                existing_ids = set(doc['_id'] for doc in collection.find({}, {'_id': 1}))
-                                docs_to_remove = [doc for doc in documents if doc['_id'] in existing_ids]
-                                if docs_to_remove:
-                                    collection.delete_many({'_id': {'$in': [doc['_id'] for doc in docs_to_remove]}})
-                                collection.insert_many(documents)
-                            elif conflict_mode == 1:  # Mantener documentos existentes si tienen la misma ID
-                                existing_ids = set(doc['_id'] for doc in collection.find({}, {'_id': 1}))
-                                docs_to_insert = [doc for doc in documents if doc['_id'] not in existing_ids]
-                                if docs_to_insert:
-                                    collection.insert_many(docs_to_insert)
-                            else:  # Solo añadir documentos que no existan
-                                existing_ids = set(doc['_id'] for doc in collection.find({}, {'_id': 1}))
-                                docs_to_insert = [doc for doc in documents if doc['_id'] not in existing_ids]
-                                if docs_to_insert:
-                                    collection.insert_many(docs_to_insert)
-                            
-                            # Restaurar índices
-                            indexes_file = os.path.join(collections_dir, f"{collection_name}_indexes.json")
-                            indexes_gz_file = indexes_file + '.gz'
-                            
-                            if os.path.exists(indexes_file):
-                                with open(indexes_file, 'r', encoding='utf-8') as f:
-                                    indexes = json.load(f)
-                            elif os.path.exists(indexes_gz_file):
-                                with gzip.open(indexes_gz_file, 'rt', encoding='utf-8') as f:
-                                    indexes = json.load(f)
-                            
-                            if indexes:
-                        f.write(f"Tipo: {'Completa' if is_full_restore else 'Selectiva'}\n")
-                        f.write(f"Colecciones restauradas: {restored_collections} de {len(collections_to_restore)}\n")
-                        
+                                    doc["_id"] = ObjectId(id_str)
+                                except Exception:
+                                    pass
+
+                        col = self.db[collection_name]
+                        if conflict_mode == 0:
+                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
+                            to_rm = [d for d in documents if d["_id"] in existing]
+                            if to_rm:
+                                col.delete_many({"_id": {"$in": [d["_id"] for d in to_rm]}})
+                            col.insert_many(documents)
+                        elif conflict_mode == 1:
+                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
+                            to_ins = [d for d in documents if d["_id"] not in existing]
+                            if to_ins:
+                                col.insert_many(to_ins)
+                        else:
+                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
+                            to_ins = [d for d in documents if d["_id"] not in existing]
+                            if to_ins:
+                                col.insert_many(to_ins)
+
+                        idx_file = os.path.join(
+                            collections_dir, f"{collection_name}_indexes.json"
+                        )
+                        idx_gz = idx_file + ".gz"
+                        indexes = []
+                        if os.path.exists(idx_file):
+                            with open(idx_file, "r", encoding="utf-8") as f_i:
+                                indexes = json.load(f_i)
+                        elif os.path.exists(idx_gz):
+                            with gzip.open(idx_gz, "rt", encoding="utf-8") as f_i:
+                                indexes = json.load(f_i)
+
+                        for idx in indexes:
+                            if idx.get("name") != "_id_":
+                                try:
+                                    col.create_index(idx["key"], name=idx.get("name"))
+                                except Exception:
+                                    pass
+
+                        restored_collections[0] += 1
+
+                    except Exception as exc:
+                        errors.append(f"Error restaurando '{collection_name}': {exc}")
+
+                report_file = os.path.join(backup_dir, "restore_report.txt")
+                try:
+                    with open(report_file, "w", encoding="utf-8") as f:
+                        tipo = "Completa" if is_full_restore else "Selectiva"
+                        print("Informe de restauracion", file=f)
+                        print(f"Tipo: {tipo}", file=f)
+                        print(
+                            f"Colecciones restauradas: {restored_collections[0]}"
+                            f" de {len(collections_to_restore)}",
+                            file=f,
+                        )
                         if errors:
-                            f.write("\nErrores encontrados durante la restauración:\n")
-                            for error in errors:
-                                f.write(f"  - {error}\n")
-                    
-                    # Finalizar
-                    progress_dialog.setValue(100)
-                    progress_dialog.setLabelText(f"Restauración completada. {restored_collections} colecciones restauradas.")
-                    
-                    result_message = f"Restauración completada con éxito. {restored_collections} de {len(collections_to_restore)} colecciones restauradas."
-                    if errors:
-                        result_message += f"\n\nSe encontraron {len(errors)} errores durante el proceso."
-                        
-                    return True, result_message
-                    
-                except Exception as e:
-                    progress_dialog.setLabelText(f"Error durante la restauración: {str(e)}")
-                    return False, str(e)
-            
-            # Ejecutar restauración en un hilo separado
+                            print("", file=f)
+                            print("Errores durante la restauracion:", file=f)
+                            for err in errors:
+                                print(f"  - {err}", file=f)
+                except Exception:
+                    pass
+
+                progress_dialog.setValue(100)
+                progress_dialog.setLabelText(
+                    f"Restauracion completada. "
+                    f"{restored_collections[0]} colecciones restauradas."
+                )
+
             restore_thread = threading.Thread(target=perform_restore)
             restore_thread.daemon = True
             restore_thread.start()
-            
-            # Esperar a que termine la restauración o se cancele
+
             while restore_thread.is_alive() and not progress_dialog.wasCanceled():
                 QApplication.processEvents()
+
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error", f"Error durante la restauracion: {str(e)}"
+            )
+            self.show_status_message(f"Error: {str(e)}", error=True)
+
     def maintain_collections(self):
         """Realizar tareas de mantenimiento en colecciones"""
         if self.db is None:
@@ -6802,604 +6830,6 @@ Total de bases de datos: {len(databases)}""")
             results_text.append(f"❌ Error durante mantenimiento: {str(e)}")
             QMessageBox.critical(dialog, "Error", f"Error durante operaciones de mantenimiento: {str(e)}")
 
-        if not collections:
-            QMessageBox.information(self, "Información", "No hay colecciones disponibles para mantenimiento")
-            return
-
-        # Crear diálogo de mantenimiento
-        maintenance_dialog = QDialog(self)
-        maintenance_dialog.setWindowTitle("Mantenimiento de Colecciones")
-        maintenance_dialog.resize(700, 550)
-
-        layout = QVBoxLayout(maintenance_dialog)
-
-        # Título e información
-        title_label = QLabel("<h2>Mantenimiento de Colecciones</h2>")
-        title_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(title_label)
-
-        info_label = QLabel("Seleccione las colecciones a mantener y las operaciones de mantenimiento a realizar.")
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-
-        # Selección de colecciones
-        collections_group = QGroupBox("Seleccionar Colecciones")
-        collections_layout = QVBoxLayout(collections_group)
-
-        collections_list = QListWidget()
-        collections_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-
-        for collection in collections:
-            item = QListWidgetItem(collection)
-            collections_list.addItem(item)
-
-        collections_layout.addWidget(collections_list)
-
-        # Botones para seleccionar todos/ninguno
-        selection_buttons = QHBoxLayout()
-
-        select_all_button = QPushButton("Seleccionar Todos")
-        select_all_button.clicked.connect(lambda: self.select_all_items(collections_list, True))
-        selection_buttons.addWidget(select_all_button)
-
-        clear_selection_button = QPushButton("Limpiar Selección")
-        clear_selection_button.clicked.connect(lambda: self.select_all_items(collections_list, False))
-        selection_buttons.addWidget(clear_selection_button)
-
-        collections_layout.addLayout(selection_buttons)
-        layout.addWidget(collections_group)
-
-        # Opciones de mantenimiento
-        maintenance_group = QGroupBox("Operaciones de Mantenimiento")
-        maintenance_layout = QVBoxLayout(maintenance_group)
-
-        # Compactar colecciones
-        compact_check = QCheckBox("Compactar colecciones (reduce fragmentación)")
-        maintenance_layout.addWidget(compact_check)
-
-        # Reparar índices
-        repair_indexes_check = QCheckBox("Reparar índices (reconstruye índices dañados)")
-        maintenance_layout.addWidget(repair_indexes_check)
-
-        # Validar documentos
-        validate_docs_check = QCheckBox("Validar integridad de documentos")
-        maintenance_layout.addWidget(validate_docs_check)
-
-        # Eliminar documentos duplicados
-        remove_duplicates_check = QCheckBox("Eliminar documentos duplicados")
-        maintenance_layout.addWidget(remove_duplicates_check)
-
-        # Actualizar estadísticas
-        update_stats_check = QCheckBox("Actualizar estadísticas")
-        update_stats_check.setChecked(True)
-        maintenance_layout.addWidget(update_stats_check)
-
-        layout.addWidget(maintenance_group)
-
-        # Opciones avanzadas
-        advanced_group = QGroupBox("Opciones Avanzadas")
-        advanced_layout = QVBoxLayout(advanced_group)
-
-        # Programar mantenimiento
-        schedule_check = QCheckBox("Programar mantenimiento periódico")
-        advanced_layout.addWidget(schedule_check)
-
-        # Opciones de programación
-        schedule_options = QWidget()
-        schedule_options.setEnabled(False)
-        schedule_options_layout = QFormLayout(schedule_options)
-
-        frequency_combo = QComboBox()
-        frequency_combo.addItems(["Diario", "Semanal", "Mensual"])
-        schedule_options_layout.addRow("Frecuencia:", frequency_combo)
-
-        time_edit = QTimeEdit()
-        time_edit.setTime(QTime(3, 0))  # 3:00 AM por defecto
-        schedule_options_layout.addRow("Hora:", time_edit)
-
-        advanced_layout.addWidget(schedule_options)
-
-        # Conectar checkbox con opciones de programación
-        schedule_check.toggled.connect(schedule_options.setEnabled)
-
-        layout.addWidget(advanced_group)
-
-        # Resultados
-        results_group = QGroupBox("Resultados de Mantenimiento")
-        results_layout = QVBoxLayout(results_group)
-
-        results_text = QTextEdit()
-        results_text.setReadOnly(True)
-        results_text.setPlaceholderText("Los resultados de las operaciones de mantenimiento se mostrarán aquí.")
-        results_layout.addWidget(results_text)
-
-        layout.addWidget(results_group)
-
-        # Botones de acción
-        button_layout = QHBoxLayout()
-
-        execute_button = QPushButton("Ejecutar Mantenimiento")
-        execute_button.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
-        button_layout.addWidget(execute_button)
-
-        close_button = QPushButton("Cerrar")
-        button_layout.addWidget(close_button)
-
-        layout.addLayout(button_layout)
-
-        # Conectar señales
-        execute_button.clicked.connect(lambda: self.execute_maintenance(
-            [collections_list.item(i).text() for i in range(collections_list.count()) 
-             if collections_list.item(i).isSelected()],
-            compact_check.isChecked(),
-            repair_indexes_check.isChecked(),
-            validate_docs_check.isChecked(),
-            remove_duplicates_check.isChecked(),
-            update_stats_check.isChecked(),
-            schedule_check.isChecked(),
-            frequency_combo.currentText(),
-            time_edit.time(),
-            results_text,
-            maintenance_dialog
-        ))
-
-        close_button.clicked.connect(maintenance_dialog.reject)
-
-        # Mostrar el diálogo
-        maintenance_dialog.exec()
-
-    except Exception as e:
-        QMessageBox.critical(self, "Error", f"Error al iniciar mantenimiento: {str(e)}")
-        self.show_status_message(f"Error: {str(e)}", error=True)
-
-    def select_all_items(self, list_widget, select):
-        """Seleccionar o deseleccionar todos los elementos de un QListWidget"""
-        for i in range(list_widget.count()):
-            list_widget.item(i).setSelected(select)
-
-def execute_maintenance(self, selected_collections, compact, repair_indexes, 
-                      validate_docs, remove_duplicates, update_stats,
-                      schedule_maintenance, frequency, schedule_time,
-                      results_text, dialog):
-    """Ejecutar operaciones de mantenimiento en las colecciones seleccionadas"""
-    if not selected_collections:
-        QMessageBox.warning(dialog, "Advertencia", "Debe seleccionar al menos una colección para mantenimiento")
-        return
-
-    try:
-        # Si se programó mantenimiento
-        if schedule_maintenance:
-            self.schedule_maintenance_task(
-                selected_collections, compact, repair_indexes, 
-                validate_docs, remove_duplicates, update_stats,
-                frequency, schedule_time
-            )
-            results_text.append("✅ Programación de mantenimiento configurada correctamente.")
-            results_text.append(f"📅 Frecuencia: {frequency}")
-            results_text.append(f"🕒 Hora: {schedule_time.toString('HH:mm')}")
-            return
-
-        # Crear diálogo de progreso
-        progress = QProgressDialog("Iniciando operaciones de mantenimiento...", "Cancelar", 0, 100, dialog)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setValue(0)
-        progress.show()
-
-        # Resultado general
-        overall_results = []
-
-        # Mensaje de inicio
-        start_time = datetime.datetime.now()
-        results_text.clear()
-        results_text.append(f"🚀 Iniciando mantenimiento: {start_time.strftime('%d/%m/%Y %H:%M:%S')}")
-        results_text.append(f"📊 Colecciones seleccionadas: {len(selected_collections)}")
-        results_text.append("=" * 50)
-        results_text.append("")
-
-        # Procesar cada colección
-        for i, collection_name in enumerate(selected_collections):
-            if progress.wasCanceled():
-                results_text.append("\n❌ Operación cancelada por el usuario")
-                break
-
-            progress.setValue(int((i / len(selected_collections)) * 100))
-            progress.setLabelText(f"Procesando colección: {collection_name}")
-
-            collection_results = []
-            collection_results.append(f"📂 Colección: {collection_name}")
-
-            try:
-                collection = self.db[collection_name]
-
-                # 1. Validar documentos
-                if validate_docs:
-                    progress.setLabelText(f"Validando documentos en {collection_name}...")
-                    QApplication.processEvents()
-
-                    try:
-                        validate_result = self.db.command("validate", collection_name)
-                        is_valid = validate_result.get("valid", False)
-
-                        if is_valid:
-                            collection_results.append("  ✅ Validación: La colección es válida")
-                        else:
-                            collection_results.append("  ❌ Validación: Se encontraron problemas en la colección")
-                            collection_results.append(f"    - Detalles: {validate_result.get('errors', 'No hay detalles disponibles')}")
-
-                    except Exception as e:
-                        collection_results.append(f"  ❌ Error durante validación: {str(e)}")
-
-                # 2. Reparar índices
-                if repair_indexes:
-                    progress.setLabelText(f"Reparando índices en {collection_name}...")
-                    QApplication.processEvents()
-
-                    try:
-                        # Listar índices actuales
-                        original_indexes = list(collection.list_indexes())
-
-                        # Eliminar índices excepto _id
-                        for index in original_indexes:
-                            if index["name"] != "_id_":
-                                collection.drop_index(index["name"])
-
-                        # Recrear índices
-                        for index in original_indexes:
-                            if index["name"] != "_id_":
-                                keys = [(k, v) for k, v in index["key"].items()]
-
-                                # Extraer opciones del índice
-                                options = {}
-                                for k, v in index.items():
-                                    if k not in ["key", "v", "ns"]:
-                                        options[k] = v
-
-                                collection.create_index(keys, **options)
-
-                        collection_results.append(f"  ✅ Reparación de índices: {len(original_indexes) - 1} índices reconstruidos")
-
-                    except Exception as e:
-                        collection_results.append(f"  ❌ Error durante reparación de índices: {str(e)}")
-
-                # 3. Eliminar documentos duplicados
-                if remove_duplicates:
-                    progress.setLabelText(f"Eliminando duplicados en {collection_name}...")
-                    QApplication.processEvents()
-
-                    try:
-                        # Buscar duplicados basados en _id
-                        pipeline = [
-                            {"$group": {"_id": "$_id", "count": {"$sum": 1}}},
-                            {"$match": {"count": {"$gt": 1}}}
-                        ]
-
-                        duplicates = list(collection.aggregate(pipeline))
-                        removed_count = 0
-
-                        for dup in duplicates:
-                            dup_id = dup["_id"]
-                            # Encontrar todos los documentos con este ID
-                            docs = list(collection.find({"_id": dup_id}))
-                            # Código para eliminación de duplicados
-                            collection.delete_one({"_id": dup_id})
-                            removed_count += 1
-
-                        if duplicates:
-                            collection_results.append(f"  ✅ Eliminación de duplicados: {removed_count} documentos duplicados eliminados")
-                        else:
-                            collection_results.append("  ✅ No se encontraron documentos duplicados")
-
-                    except Exception as e:
-                        collection_results.append(f"  ❌ Error eliminando duplicados: {str(e)}")
-
-                # 4. Compactar colección
-                if compact:
-                    progress.setLabelText(f"Compactando colección {collection_name}...")
-                    QApplication.processEvents()
-
-                    try:
-                        # Obtener estadísticas antes de compactar
-                        before_stats = self.db.command("collStats", collection_name)
-                        before_size = before_stats.get("size", 0) / (1024 * 1024)  # MB
-
-                        # Opción 1: Si es MongoDB local, intentar con compact
-                        try:
-                            self.db.command("compact", collection_name)
-                            compact_method = "compact"
-                        except Exception:
-                            # Opción 2: Si falló, usar un enfoque con inserción masiva
-                            docs = list(collection.find({}))
-                            if docs:
-                                import time
-                                temp_collection = f"{collection_name}_temp_{int(time.time())}"
-                                self.db.create_collection(temp_collection)
-
-                                # Copiar documentos a la colección temporal
-                                if docs:
-                                    self.db[temp_collection].insert_many(docs)
-                                # Copiar documentos a la colección temporal
-                                if docs:
-                                    self.db[temp_collection].insert_many(docs)
-
-                                # Copiar índices
-                                for index in collection.list_indexes():
-                                    if index["name"] != "_id_":
-                                        keys = [(k, v) for k, v in index["key"].items()]
-                                        options = {}
-                                        for k, v in index.items():
-                                            if k not in ["key", "v", "ns"]:
-                                                options[k] = v
-                                        self.db[temp_collection].create_index(keys, **options)
-
-                                # Renombrar colecciones
-                                self.db[collection_name].drop()
-                                self.db[temp_collection].rename(collection_name)
-                                compact_method = "recreate"
-
-                        # Obtener estadísticas después de compactar
-                        after_stats = self.db.command("collStats", collection_name)
-                        after_size = after_stats.get("size", 0) / (1024 * 1024)  # MB
-
-                        savings = before_size - after_size
-                        if savings > 0:
-                            collection_results.append(f"  ✅ Compactación: Espacio recuperado: {savings:.2f} MB")
-                        else:
-                            collection_results.append(f"  ℹ️ Compactación: No se recuperó espacio significativo")
-
-                    except Exception as e:
-                        collection_results.append(f"  ❌ Error durante compactación: {str(e)}")
-
-                # 5. Actualizar estadísticas
-                if update_stats:
-                    progress.setLabelText(f"Actualizando estadísticas para {collection_name}...")
-                    QApplication.processEvents()
-
-                    try:
-                        collection_stats = self.db.command("collStats", collection_name)
-                        size_mb = collection_stats.get("size", 0) / (1024 * 1024)
-                        storage_mb = collection_stats.get("storageSize", 0) / (1024 * 1024)
-                        index_size_mb = collection_stats.get("totalIndexSize", 0) / (1024 * 1024)
-
-                        collection_results.append(f"  ℹ️ Estadísticas actualizadas:")
-                        collection_results.append(f"    - Tamaño de datos: {size_mb:.2f} MB")
-                        collection_results.append(f"    - Tamaño de almacenamiento: {storage_mb:.2f} MB")
-                        collection_results.append(f"    - Tamaño de índices: {index_size_mb:.2f} MB")
-
-                    except Exception as e:
-                        collection_results.append(f"  ❌ Error al actualizar estadísticas: {str(e)}")
-
-            except Exception as e:
-                collection_results.append(f"  ❌ Error general: {str(e)}")
-
-            # Añadir resultados de esta colección
-            for result in collection_results:
-                results_text.append(result)
-            results_text.append("")
-
-            # Actualizar para mostrar resultados en tiempo real
-            QApplication.processEvents()
-
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
-            progress.show()
-            
-            # Resultado general
-            overall_results = []
-            
-            # Mensaje de inicio
-            start_time = datetime.datetime.now()
-            results_text.clear()
-            results_text.append(f"🚀 Iniciando mantenimiento: {start_time.strftime('%d/%m/%Y %H:%M:%S')}")
-            results_text.append(f"📊 Colecciones seleccionadas: {len(selected_collections)}")
-            results_text.append("=" * 50)
-            results_text.append("")
-            
-            # Procesar cada colección
-            for i, collection_name in enumerate(selected_collections):
-                if progress.wasCanceled():
-                    results_text.append("\n❌ Operación cancelada por el usuario")
-                    break
-                    
-                progress.setValue(int((i / len(selected_collections)) * 100))
-                progress.setLabelText(f"Procesando colección: {collection_name}")
-                
-                collection_results = []
-                collection_results.append(f"📂 Colección: {collection_name}")
-                
-                try:
-                    collection = self.db[collection_name]
-                    
-                    # 1. Validar documentos
-                    if validate_docs:
-                        progress.setLabelText(f"Validando documentos en {collection_name}...")
-                        QApplication.processEvents()
-                        
-                        try:
-                            validate_result = self.db.command("validate", collection_name)
-                            is_valid = validate_result.get("valid", False)
-                            
-                            if is_valid:
-                                collection_results.append("  ✅ Validación: La colección es válida")
-                            else:
-                                collection_results.append("  ❌ Validación: Se encontraron problemas en la colección")
-                                collection_results.append(f"    - Detalles: {validate_result.get('errors', 'No hay detalles disponibles')}")
-                                
-                        except Exception as e:
-                            collection_results.append(f"  ❌ Error durante validación: {str(e)}")
-                    
-                    # 2. Reparar índices
-                    if repair_indexes:
-                        progress.setLabelText(f"Reparando índices en {collection_name}...")
-                        QApplication.processEvents()
-                        
-                        try:
-                            # Listar índices actuales
-                            original_indexes = list(collection.list_indexes())
-                            
-                            # Eliminar índices excepto _id
-                            for index in original_indexes:
-                                if index["name"] != "_id_":
-                                    collection.drop_index(index["name"])
-                            
-                            # Recrear índices
-                            for index in original_indexes:
-                                if index["name"] != "_id_":
-                                    keys = [(k, v) for k, v in index["key"].items()]
-                                    
-                                    # Extraer opciones del índice
-                                    options = {}
-                                    for k, v in index.items():
-                                        if k not in ["key", "v", "ns"]:
-                                            options[k] = v
-                                            
-                                    collection.create_index(keys, **options)
-                            
-                            collection_results.append(f"  ✅ Reparación de índices: {len(original_indexes) - 1} índices reconstruidos")
-                            
-                        except Exception as e:
-                            collection_results.append(f"  ❌ Error durante reparación de índices: {str(e)}")
-                    
-                    # 3. Eliminar documentos duplicados
-                    if remove_duplicates:
-                        progress.setLabelText(f"Eliminando duplicados en {collection_name}...")
-                        QApplication.processEvents()
-                        
-                        try:
-                            # Buscar duplicados basados en _id
-                            pipeline = [
-                                {"$group": {"_id": "$_id", "count": {"$sum": 1}}},
-                                {"$match": {"count": {"$gt": 1}}}
-                            ]
-                            
-                            duplicates = list(collection.aggregate(pipeline))
-                            removed_count = 0
-                            
-                            for dup in duplicates:
-                                dup_id = dup["_id"]
-                                # Encontrar todos los documentos con este ID
-                                docs = list(collection.find({"_id": dup_id}))
-                                # Código para eliminación de duplicados
-                                collection.delete_one({"_id": dup_id})
-                                removed_count += 1
-                                
-                            if duplicates:
-                                collection_results.append(f"  ✅ Eliminación de duplicados: {removed_count} documentos duplicados eliminados")
-                            else:
-                                collection_results.append("  ✅ No se encontraron documentos duplicados")
-                                
-                        except Exception as e:
-                            collection_results.append(f"  ❌ Error eliminando duplicados: {str(e)}")
-                    
-                    # 4. Compactar colección
-                    if compact:
-                        progress.setLabelText(f"Compactando colección {collection_name}...")
-                        QApplication.processEvents()
-                        
-                        try:
-                            # Obtener estadísticas antes de compactar
-                            before_stats = self.db.command("collStats", collection_name)
-                            before_size = before_stats.get("size", 0) / (1024 * 1024)  # MB
-                            
-                            # Opción 1: Si es MongoDB local, intentar con compact
-                            try:
-                                self.db.command("compact", collection_name)
-                                compact_method = "compact"
-                            except Exception:
-                                # Opción 2: Si falló, usar un enfoque con inserción masiva
-                                docs = list(collection.find({}))
-                                if docs:
-                                    import time
-                                    temp_collection = f"{collection_name}_temp_{int(time.time())}"
-                                    self.db.create_collection(temp_collection)
-                                    
-                                    # Copiar documentos a la colección temporal
-                                    if docs:
-                                        self.db[temp_collection].insert_many(docs)
-                                    # Copiar documentos a la colección temporal
-                                    if docs:
-                                        self.db[temp_collection].insert_many(docs)
-                                    
-                                    # Copiar índices
-                                    for index in collection.list_indexes():
-                                        if index["name"] != "_id_":
-                                            keys = [(k, v) for k, v in index["key"].items()]
-                                            options = {}
-                                            for k, v in index.items():
-                                                if k not in ["key", "v", "ns"]:
-                                                    options[k] = v
-                                            self.db[temp_collection].create_index(keys, **options)
-                                    
-                                    # Renombrar colecciones
-                                    self.db[collection_name].drop()
-                                    self.db[temp_collection].rename(collection_name)
-                                    compact_method = "recreate"
-                            
-                            # Obtener estadísticas después de compactar
-                            after_stats = self.db.command("collStats", collection_name)
-                            after_size = after_stats.get("size", 0) / (1024 * 1024)  # MB
-                            
-                            savings = before_size - after_size
-                            if savings > 0:
-                                collection_results.append(f"  ✅ Compactación: Espacio recuperado: {savings:.2f} MB")
-                            else:
-                                collection_results.append(f"  ℹ️ Compactación: No se recuperó espacio significativo")
-                            
-                        except Exception as e:
-                            collection_results.append(f"  ❌ Error durante compactación: {str(e)}")
-                    # 5. Actualizar estadísticas
-                    if update_stats:
-                        progress.setLabelText(f"Actualizando estadísticas para {collection_name}...")
-                        QApplication.processEvents()
-                        
-                        try:
-                            collection_stats = self.db.command("collStats", collection_name)
-                            size_mb = collection_stats.get("size", 0) / (1024 * 1024)
-                            storage_mb = collection_stats.get("storageSize", 0) / (1024 * 1024)
-                            index_size_mb = collection_stats.get("totalIndexSize", 0) / (1024 * 1024)
-                            
-                            collection_results.append(f"  ℹ️ Estadísticas actualizadas:")
-                            collection_results.append(f"    - Tamaño de datos: {size_mb:.2f} MB")
-                            collection_results.append(f"    - Tamaño de almacenamiento: {storage_mb:.2f} MB")
-                            collection_results.append(f"    - Tamaño de índices: {index_size_mb:.2f} MB")
-                            
-                        except Exception as e:
-                            collection_results.append(f"  ❌ Error al actualizar estadísticas: {str(e)}")
-                    
-                except Exception as e:
-                    collection_results.append(f"  ❌ Error general: {str(e)}")
-                
-                # Añadir resultados de esta colección
-                for result in collection_results:
-                    results_text.append(result)
-                results_text.append("")
-                
-                # Actualizar para mostrar resultados en tiempo real
-                QApplication.processEvents()
-                
-                # Almacenar resultados generales
-                overall_results.extend(collection_results)
-            
-            # Finalizar
-            end_time = datetime.datetime.now()
-            elapsed = end_time - start_time
-            progress.setValue(100)
-            
-            # Añadir resumen
-            results_text.append("=" * 50)
-            results_text.append(f"✅ Mantenimiento completado en {elapsed.total_seconds():.2f} segundos")
-            results_text.append(f"📊 {len(selected_collections)} colecciones procesadas")
-            
-            # Actualizar la interfaz
-            self.show_collections()
-            self.update_database_stats()
-            
-        except Exception as e:
-            results_text.append(f"❌ Error durante mantenimiento: {str(e)}")
-            QMessageBox.critical(dialog, "Error", f"Error durante operaciones de mantenimiento: {str(e)}")
-    
     def schedule_maintenance_task(self, selected_collections, compact, repair_indexes, 
                                 validate_docs, remove_duplicates, update_stats,
                                 frequency, schedule_time):
@@ -7494,8 +6924,7 @@ if __name__ == '__main__':
                 "Mantenimiento Programado",
                 f"El mantenimiento ha sido programado con frecuencia {frequency.lower()} a las {time_str}.\n\n"
                 f"Próxima ejecución: {next_run.strftime('%d/%m/%Y %H:%M')}")
-            )
-            
+
             # Mostrar mensaje en la barra de estado
             self.show_status_message(f"Mantenimiento programado para ejecutarse {frequency.lower()} a las {time_str}")
             
