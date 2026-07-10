@@ -18,6 +18,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QTime, QDateTime, QDate
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QFont, QIcon
+from .dialogs import (
+    CreateCollectionDialog,
+    DropCollectionDialog,
+    ImportDialog,
+    ExportDialog,
+    PasswordManageDialog,
+    CollectionSelectDialog,
+)
 
 # Import sip for handling deleted C++ objects
 try:
@@ -2400,25 +2408,6 @@ Ejemplos de consultas:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
             
-        # Create a simple dialog for collection name input
-        class CreateCollectionDialog(QDialog):
-            def __init__(self, parent=None):
-                super().__init__(parent)
-                self.setWindowTitle("Crear Colección")
-                self.resize(300, 100)
-                
-                layout = QFormLayout(self)
-                
-                self.name_input = QLineEdit(self)
-                layout.addRow("Nombre de la colección:", self.name_input)
-                
-                self.button_box = QDialogButtonBox(
-                    QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-                )
-                self.button_box.accepted.connect(self.accept)
-                self.button_box.rejected.connect(self.reject)
-                layout.addRow(self.button_box)
-        
         dialog = CreateCollectionDialog(self)
         if dialog.exec():
             collection_name = dialog.name_input.text().strip()
@@ -2446,40 +2435,7 @@ Ejemplos de consultas:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
             
-        try:     
-            # Create dialog for collection selection
-            class DropCollectionDialog(QDialog):
-                def __init__(self, parent=None, collections=None):
-                    super().__init__(parent)
-                    self.setWindowTitle("Eliminar Colección")
-                    self.resize(300, 120)
-                    
-                    layout = QVBoxLayout(self)
-                    
-                    self.label = QLabel("Seleccione colección a eliminar:")
-                    layout.addWidget(self.label)
-                    
-                    self.collection_combo = QComboBox(self)
-                    if collections:
-                        self.collection_combo.addItems(collections)
-                    layout.addWidget(self.collection_combo)
-                    
-                    self.warning_label = QLabel("¡ADVERTENCIA: Esta acción no se puede deshacer!")
-                    self.warning_label.setStyleSheet("color: red; font-weight: bold;")
-                    layout.addWidget(self.warning_label)
-                    
-                    self.button_box = QDialogButtonBox(
-                        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-                    )
-                    self.button_box.accepted.connect(self.accept)
-                    self.button_box.rejected.connect(self.reject)
-                    layout.addWidget(self.button_box)
-                    
-                def get_selected_collection(self):
-                    return self.collection_combo.currentText()
-            
-            from PyQt6.QtWidgets import QFileDialog
-            
+        try:
             # Select collection to drop
             collections = self.db.list_collection_names()
                 
@@ -2691,55 +2647,6 @@ Ejemplos de consultas:
         # Select target collection
         collections = self.db.list_collection_names()
         
-        class ImportDialog(QDialog):
-            def __init__(self, parent=None, collections=None):
-                super().__init__(parent)
-                self.setWindowTitle("Importar Datos")
-                self.resize(400, 200)
-                
-                layout = QVBoxLayout(self)
-                
-                # Collection selection
-                self.collection_label = QLabel("Seleccione colección destino:")
-                layout.addWidget(self.collection_label)
-                
-                self.collection_combo = QComboBox()
-                if collections:
-                    self.collection_combo.addItems(collections)
-                layout.addWidget(self.collection_combo)
-                
-                # Create new collection option
-                self.new_collection_label = QLabel("O crear una nueva colección:")
-                layout.addWidget(self.new_collection_label)
-                
-                self.new_collection_input = QLineEdit()
-                layout.addWidget(self.new_collection_input)
-                
-                # Import options
-                self.options_label = QLabel("Opciones de importación:")
-                layout.addWidget(self.options_label)
-                
-                self.clear_collection = QComboBox()
-                self.clear_collection.addItems(["Añadir a documentos existentes", "Reemplazar contenido de la colección"])
-                layout.addWidget(self.clear_collection)
-                
-                # Buttons
-                self.button_box = QDialogButtonBox(
-                    QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-                )
-                self.button_box.accepted.connect(self.accept)
-                self.button_box.rejected.connect(self.reject)
-                layout.addWidget(self.button_box)
-
-            def get_target_collection(self):
-                new_collection = self.new_collection_input.text().strip()
-                if new_collection:
-                    return new_collection
-                return self.collection_combo.currentText()
-                
-            def should_clear_collection(self):
-                return self.clear_collection.currentIndex() == 1
-
         dialog = ImportDialog(self, collections)
         if not dialog.exec():
             return
@@ -2849,47 +2756,6 @@ Ejemplos de consultas:
             QMessageBox.information(self, "Información", "No hay colecciones para exportar")
             return
             
-        # Create dialog for collection selection
-        class ExportDialog(QDialog):
-            def __init__(self, parent=None, collections=None):
-                super().__init__(parent)
-                self.setWindowTitle("Exportar Colección")
-                self.resize(400, 150)
-                
-                layout = QVBoxLayout(self)
-                
-                # Collection selection
-                self.collection_label = QLabel("Seleccionar colección a exportar:")
-                layout.addWidget(self.collection_label)
-                
-                self.collection_combo = QComboBox()
-                if collections:
-                    self.collection_combo.addItems(collections)
-                layout.addWidget(self.collection_combo)
-                
-                # Export format
-                self.format_label = QLabel("Seleccionar formato de exportación:")
-                layout.addWidget(self.format_label)
-                
-                self.format_combo = QComboBox()
-                self.format_combo.addItems(["JSON", "CSV"])
-                layout.addWidget(self.format_combo)
-                
-                # Buttons
-                self.button_box = QDialogButtonBox(
-                    QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-                )
-                self.button_box.accepted.connect(self.accept)
-                self.button_box.rejected.connect(self.reject)
-                layout.addWidget(self.button_box)
-                
-            def get_selected_collection(self):
-                return self.collection_combo.currentText()
-                
-            def get_export_format(self):
-                return self.format_combo.currentText().lower()
-        
-        # Show dialog
         dialog = ExportDialog(self, collections)
         if not dialog.exec():
             return
@@ -3421,73 +3287,6 @@ Ejemplos de consultas:
             return
             
         try:
-            # Primero seleccionar el usuario para cambiar la contraseña
-            # Reusamos la función de búsqueda de usuario
-            class PasswordManageDialog(QDialog):
-                def __init__(self, parent=None):
-                    super().__init__(parent)
-                    self.setWindowTitle("Gestión de Contraseñas")
-                    self.resize(400, 180)
-                    
-                    layout = QVBoxLayout(self)
-                    
-                    # Campos de búsqueda
-                    search_layout = QFormLayout()
-                    
-                    self.search_type = QComboBox()
-                    self.search_type.addItems(["Por ID", "Por Nombre", "Por Email"])
-                    search_layout.addRow("Buscar usuario:", self.search_type)
-                    
-                    self.search_text = QLineEdit()
-                    search_layout.addRow("Texto de búsqueda:", self.search_text)
-                    
-                    self.search_button = QPushButton("Buscar Usuario")
-                    self.search_button.setStyleSheet("background-color: #3498db; color: white;")
-                    
-                    layout.addLayout(search_layout)
-                    layout.addWidget(self.search_button)
-                    
-                    # Separador
-                    line = QFrame()
-                    line.setFrameShape(QFrame.Shape.HLine)
-                    line.setFrameShadow(QFrame.Shadow.Sunken)
-                    layout.addWidget(line)
-                    
-                    # Sección para cambiar contraseña
-                    self.user_label = QLabel("Seleccione un usuario primero")
-                    layout.addWidget(self.user_label)
-                    
-                    password_layout = QFormLayout()
-                    
-                    self.password_input = QLineEdit()
-                    self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-                    self.password_input.setEnabled(False)
-                    password_layout.addRow("Nueva Contraseña:", self.password_input)
-                    
-                    self.confirm_input = QLineEdit()
-                    self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
-                    self.confirm_input.setEnabled(False)
-                    password_layout.addRow("Confirmar Contraseña:", self.confirm_input)
-                    
-                    layout.addLayout(password_layout)
-                    
-                    # Botones
-                    button_layout = QHBoxLayout()
-                    
-                    self.save_button = QPushButton("Cambiar Contraseña")
-                    self.save_button.setStyleSheet("background-color: #2ecc71; color: white;")
-                    self.save_button.setEnabled(False)
-                    button_layout.addWidget(self.save_button)
-                    
-                    self.cancel_button = QPushButton("Cancelar")
-                    button_layout.addWidget(self.cancel_button)
-                    
-                    layout.addLayout(button_layout)
-                    
-                    # Almacenar información del usuario seleccionado
-                    self.selected_user = None
-                    self.selected_collection = None
-            
             dialog = PasswordManageDialog(self)
             
             # Conectar señales a slots
@@ -4789,37 +4588,10 @@ Total de bases de datos: {len(databases)}""")
                 return
                 
             # Diálogo para seleccionar colección
-            class CollectionSelectDialog(QDialog):
-                def __init__(self, parent=None, collections=None):
-                    super().__init__(parent)
-                    self.setWindowTitle("Seleccionar Colección")
-                    self.resize(300, 200)
-                    
-                    layout = QVBoxLayout(self)
-                    
-                    self.label = QLabel("Seleccione una colección para editar sus campos:")
-                    layout.addWidget(self.label)
-                    
-                    # Usar QListWidget importado al inicio del archivo
-                    self.collection_list = QListWidget()
-                    if collections:
-                        self.collection_list.addItems(collections)
-                    layout.addWidget(self.collection_list)
-                    
-                    self.button_box = QDialogButtonBox(
-                        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-                    )
-                    self.button_box.accepted.connect(self.accept)
-                    self.button_box.rejected.connect(self.reject)
-                    layout.addWidget(self.button_box)
-                    
-                def get_selected_collection(self):
-                    if self.collection_list.currentItem():
-                        return self.collection_list.currentItem().text()
-                    return None
-                    
-            # Crear y mostrar el diálogo
-            select_dialog = CollectionSelectDialog(self, collections)
+            select_dialog = CollectionSelectDialog(
+                self, collections,
+                label="Seleccione una colección para editar sus campos:"
+            )
             if not select_dialog.exec():
                 return
                 
@@ -5133,36 +4905,10 @@ Total de bases de datos: {len(databases)}""")
                 return
                 
             # Crear diálogo para seleccionar colección
-            class CollectionSelectDialog(QDialog):
-                def __init__(self, parent=None, collections=None):
-                    super().__init__(parent)
-                    self.setWindowTitle("Seleccionar Colección")
-                    self.resize(300, 200)
-                    
-                    layout = QVBoxLayout(self)
-                    
-                    self.label = QLabel("Seleccione una colección para gestionar sus índices:")
-                    layout.addWidget(self.label)
-                    
-                    self.collection_list = QListWidget()
-                    if collections:
-                        self.collection_list.addItems(collections)
-                    layout.addWidget(self.collection_list)
-                    
-                    self.button_box = QDialogButtonBox(
-                        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-                    )
-                    self.button_box.accepted.connect(self.accept)
-                    self.button_box.rejected.connect(self.reject)
-                    layout.addWidget(self.button_box)
-                    
-                def get_selected_collection(self):
-                    if self.collection_list.currentItem():
-                        return self.collection_list.currentItem().text()
-                    return None
-                    
-            # Mostrar diálogo de selección
-            select_dialog = CollectionSelectDialog(self, collections)
+            select_dialog = CollectionSelectDialog(
+                self, collections,
+                label="Seleccione una colección para gestionar sus índices:"
+            )
             if not select_dialog.exec():
                 return
                 
