@@ -12,7 +12,7 @@ Herramienta de administración de MongoDB (local y Atlas) escrita en Python con 
 DDBB_Manager/
 ├── main_gui.py              # Punto de entrada (PyQt6)
 ├── gui/
-│   ├── main_window.py       # MainWindow (~3200 líneas): ventana principal y flujos aún no extraídos
+│   ├── main_window.py       # MainWindow (~2900 líneas): ventana principal y flujos aún no extraídos
 │   ├── dialogs/             # Diálogos PyQt6 reutilizables extraídos de MainWindow
 │   └── mixins/              # Grupos funcionales extraídos de MainWindow
 ├── core/
@@ -44,6 +44,8 @@ Mixins funcionales ya extraídos de `MainWindow`:
 - **`ImportExportMixin`**: importación y exportación de colecciones.
 - **`DatabaseManagementMixin`**: listado/cambio de bases de datos, estadísticas globales, propietarios, detalles y edición de campos.
 - **`IndexManagementMixin`**: consulta, creación y reconstrucción de índices de colecciones.
+- **`HelpMixin`**: pantalla de ayuda/tutorial y cuadro "Acerca de".
+- **`CollectionViewMixin`**: árbol de colecciones, navegación, recreación de la vista y carga de documentos.
 
 ### `gui/dialogs/`
 
@@ -57,7 +59,7 @@ Clase `DatabaseManager` con lógica de negocio: `connect`, `set_database`, CRUD,
 
 - La fase activa es la reducción incremental de `gui/main_window.py` mediante extracción a `gui/dialogs/` y `gui/mixins/`.
 - `MainWindow` sigue siendo el coordinador de UI y conexión, pero parte de los dominios de mantenimiento, respaldo, usuarios, import/export, bases de datos e índices ya vive fuera del archivo principal.
-- La siguiente frontera natural es seguir extrayendo bloques cohesivos restantes de `MainWindow` (por ejemplo integridad, tutorial/ayuda o vista de colecciones) antes de unificar con `core/`.
+- La siguiente frontera natural es seguir extrayendo bloques cohesivos restantes de `MainWindow` (especialmente `load_collection_metadata` y `detect_collection_content_type`) antes de unificar con `core/`.
 - `core/db_manager.py` continúa siendo referencia/CLI independiente; no modificarlo para cambios de GUI salvo que se planifique explícitamente la integración de capas.
 
 ## Comandos habituales

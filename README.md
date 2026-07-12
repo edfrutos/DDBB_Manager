@@ -110,6 +110,8 @@ core/
 - `ImportExportMixin`
 - `DatabaseManagementMixin`
 - `IndexManagementMixin`
+- `HelpMixin`
+- `CollectionViewMixin`
 
 `core/db_manager.py` sigue siendo una implementación independiente de referencia y todavía no es la capa de servicios de la GUI.
 
@@ -130,7 +132,7 @@ Actualmente el repositorio no contiene una suite de pruebas automatizadas. Los c
 
 ## Estado del proyecto
 
-La fase activa es una refactorización incremental de `gui/main_window.py`. Los dominios de mantenimiento, respaldo, usuarios, importación/exportación, bases de datos e índices ya están separados en mixins. Los siguientes bloques pendientes incluyen integridad, ayuda y parte de las vistas de colecciones.
+La fase activa es una refactorización incremental de `gui/main_window.py`. Los dominios de mantenimiento, respaldo, usuarios, importación/exportación, bases de datos, índices, ayuda/tutorial y vistas de colecciones ya están separados en mixins. El siguiente bloque pendiente documentado es la lógica de metadatos y detección de contenido de colecciones que aún vive en `MainWindow`.
 
 ## Seguridad
 

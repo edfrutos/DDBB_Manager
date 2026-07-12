@@ -2010,80 +2010,7 @@ def handle_choice(choice, db_manager):
             else:
                 print("Operación cancelada.")
         elif choice == "7":
-            # Verificar integridad
-            if db_manager.db is None:
-                print("Error: No hay base de datos seleccionada.")
-                return
-            
-            collection_name = input("Nombre de la colección a verificar: ")
-            use_schema = input("¿Desea validar con un esquema personalizado? (s/n): ").lower() == 's'
-            sample_size_str = input("Tamaño de muestra para verificación (Enter para 100, 0 para todos): ")
-            
-            sample_size = 100
-            if sample_size_str.strip():
-                try:
-                    sample_size = int(sample_size_str)
-                except ValueError:
-                    print("Valor inválido. Se usará 100 como predeterminado.")
-            
-            schema = None
-            if use_schema:
-                print("\nDefina el esquema de validación (formato: campo:tipo, separados por comas)")
-                print("Ejemplo: nombre:str,edad:int,activo:bool")
-                schema_str = input("Esquema: ")
-                
-                if schema_str.strip():
-                    schema = {}
-                    parts = schema_str.split(",")
-                    for part in parts:
-                        if ":" in part:
-                            field, field_type = part.split(":")
-                            schema[field.strip()] = field_type.strip()
-            
-            print("\nVerificando integridad de la colección. Esto puede tomar tiempo...")
-            report = db_manager.verify_collection_integrity(collection_name, schema, sample_size)
-            
-            # Mostrar informe
-            print("\n" + "="*60)
-            print(f"INFORME DE INTEGRIDAD: {collection_name}")
-            print("="*60)
-            print(f"Estado: {report.get('status', 'Desconocido')}")
-            print(f"Base de datos: {report.get('database_name', 'N/A')}")
-            print(f"Documentos totales: {report.get('document_count', 0)}")
-            print(f"Documentos verificados: {report.get('verified_documents', 0)}")
-            print(f"Documentos corruptos: {report.get('corrupt_documents', 0)}")
-            print(f"Problemas de estructura: {report.get('invalid_structure', 0)}")
-            print(f"Estado de índices: {report.get('index_status', 'N/A')}")
-            
-            if report.get('indexes'):
-                print("\nÍndices:")
-                for idx in report.get('indexes', []):
-                    print(f"  - {idx.get('name', 'N/A')}: {idx.get('key', 'N/A')}")
-            
-            if report.get('issues'):
-                print("\nProblemas detectados:")
-                for issue in report.get('issues', [])[:10]:  # Limitar a 10 para no saturar la pantalla
-                    print(f"  - {issue}")
-                if len(report.get('issues', [])) > 10:
-                    print(f"  ... y {len(report.get('issues', [])) - 10} problemas más.")
-            
-            if report.get('recommendations'):
-                print("\nRecomendaciones:")
-                for rec in report.get('recommendations', []):
-                    print(f"  - {rec}")
-            
-            # Preguntar si se desea exportar el informe completo
-            export_report = input("\n¿Desea exportar el informe completo a un archivo JSON? (s/n): ").lower() == 's'
-            if export_report:
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"integrity_report_{collection_name}_{timestamp}.json"
-                try:
-                    with open(os.path.join("respaldos", filename), 'w', encoding='utf-8') as f:
-                        f.write(serialize_to_json(report, format_type='detailed'))
-                    print(f"Informe exportado a: {os.path.join('respaldos', filename)}")
-                except Exception as e:
-                    print(f"Error al exportar el informe: {e}")
-                    logger.error(f"Error al exportar informe de integridad: {e}")
+            handle_integrity_verification(db_manager)
         elif choice == "8":
             collection_name = input("Nombre de la colección: ")
             field = input("Campo para indexar: ")
@@ -2340,6 +2267,103 @@ def handle_choice(choice, db_manager):
     except Exception as e:
         logger.error(f"Error en la opción {choice}: {e}")
         print(f"Error: {e}")
+
+def _print_integrity_report(report, collection_name):
+    """Muestra por consola el informe de integridad generado."""
+    print("\n" + "=" * 60)
+    print(f"INFORME DE INTEGRIDAD: {collection_name}")
+    print("=" * 60)
+    print(f"Estado: {report.get('status', 'Desconocido')}")
+    print(f"Base de datos: {report.get('database_name', 'N/A')}")
+    print(f"Documentos totales: {report.get('document_count', 0)}")
+    print(f"Documentos verificados: {report.get('verified_documents', 0)}")
+    print(f"Documentos corruptos: {report.get('corrupt_documents', 0)}")
+    print(f"Problemas de estructura: {report.get('invalid_structure', 0)}")
+    print(f"Estado de índices: {report.get('index_status', 'N/A')}")
+
+    if report.get('indexes'):
+        print("\nÍndices:")
+        for idx in report.get('indexes', []):
+            print(f"  - {idx.get('name', 'N/A')}: {idx.get('key', 'N/A')}")
+
+    if report.get('issues'):
+        print("\nProblemas detectados:")
+        for issue in report.get('issues', [])[:10]:
+            print(f"  - {issue}")
+        if len(report.get('issues', [])) > 10:
+            print(f"  ... y {len(report.get('issues', [])) - 10} problemas más.")
+
+    if report.get('recommendations'):
+        print("\nRecomendaciones:")
+        for rec in report.get('recommendations', []):
+            print(f"  - {rec}")
+
+
+def handle_integrity_verification(db_manager):
+    """
+    Gestiona la verificación de integridad de una colección.
+
+    Args:
+        db_manager: Instancia de DatabaseManager.
+    """
+    if db_manager.db is None:
+        print("Error: No hay base de datos seleccionada.")
+        return
+
+    collection_name = input("Nombre de la colección a verificar: ")
+    use_schema = input("¿Desea validar con un esquema personalizado? (s/n): ").lower() == 's'
+    sample_size_str = input("Tamaño de muestra para verificación (Enter para 100, 0 para todos): ")
+
+    sample_size = 100
+    if sample_size_str.strip():
+        try:
+            sample_size = int(sample_size_str)
+        except ValueError:
+            print("Valor inválido. Se usará 100 como predeterminado.")
+
+    schema = None
+    if use_schema:
+        print("\nDefina el esquema de validación (formato: campo:tipo, separados por comas)")
+        print("Ejemplo: nombre:str,edad:int,activo:bool")
+        schema_str = input("Esquema: ")
+
+        if schema_str.strip():
+            schema = {}
+            parts = schema_str.split(",")
+            for part in parts:
+                if ":" in part:
+                    field, field_type = part.split(":")
+                    schema[field.strip()] = field_type.strip()
+
+    print("\nVerificando integridad de la colección. Esto puede tomar tiempo...")
+    report = db_manager.verify_collection_integrity(collection_name, schema, sample_size)
+
+    if report.get("error"):
+        print(f"Error al verificar integridad: {report['error']}")
+        return
+
+    _print_integrity_report(report, collection_name)
+
+    export_report = input("\n¿Desea exportar el informe completo a un archivo JSON? (s/n): ").lower() == 's'
+    if export_report:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"integrity_report_{collection_name}_{timestamp}.json"
+        backup_dir = "respaldos"
+        if not os.path.exists(backup_dir):
+            try:
+                os.makedirs(backup_dir)
+            except Exception as e:
+                print(f"Error al crear directorio de respaldos: {e}")
+                backup_dir = "."
+
+        output_path = os.path.join(backup_dir, filename)
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(serialize_to_json(report, format_type='detailed'))
+            print(f"Informe exportado a: {output_path}")
+        except Exception as e:
+            print(f"Error al exportar el informe: {e}")
+            logger.error(f"Error al exportar informe de integridad: {e}")
 
 def handle_user_management(db_manager):
     """
