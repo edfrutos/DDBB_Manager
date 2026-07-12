@@ -12,7 +12,9 @@ Herramienta de administración de MongoDB (local y Atlas) escrita en Python con 
 DDBB_Manager/
 ├── main_gui.py              # Punto de entrada (PyQt6)
 ├── gui/
-│   └── main_window.py       # MainWindow (~6900 líneas): toda la UI PyQt6
+│   ├── main_window.py       # MainWindow (~3200 líneas): ventana principal y flujos aún no extraídos
+│   ├── dialogs/             # Diálogos PyQt6 reutilizables extraídos de MainWindow
+│   └── mixins/              # Grupos funcionales extraídos de MainWindow
 ├── core/
 │   ├── db_manager.py        # DatabaseManager: motor CLI sin UI (referencia)
 │   └── importer.py          # ImportadorCatalogo: importación Excel/CSV con pandas
@@ -28,13 +30,35 @@ DDBB_Manager/
 
 ### `gui/main_window.py`
 
-- **`ConnectionDialog`** (línea ~39): diálogo de dos pasos — URI + perfiles guardados en `~/.mongodb_manager/connections.json` → conecta → combo de BD poblado con `list_database_names()`. Interfaz pública: `get_connection_data()` → `{"connection_string": ..., "database": ...}`.
-- **`MainWindow`** (línea ~195): ventana principal con 87 métodos. Mantiene su propia conexión pymongo (`self.client`, `self.db`). Métodos de mantenimiento: `maintain_collections` → `execute_maintenance` → `schedule_maintenance_task`.
+- **`ConnectionDialog`** (línea ~48): diálogo de dos pasos — URI + perfiles guardados en `~/.mongodb_manager/connections.json` → conecta → combo de BD poblado con `list_database_names()`. Interfaz pública: `get_connection_data()` → `{"connection_string": ..., "database": ...}`.
+- **`MainWindow`** (línea ~220): ventana principal PyQt6. Mantiene su propia conexión pymongo (`self.client`, `self.db`) y hereda mixins funcionales para reducir el tamaño del archivo principal.
 - La clase escribe en la colección `audit_log` (solo en esta GUI, no en `DatabaseManager`).
+
+### `gui/mixins/`
+
+Mixins funcionales ya extraídos de `MainWindow`:
+
+- **`MaintenanceMixin`**: mantenimiento de colecciones (`maintain_collections`, `execute_maintenance`, `schedule_maintenance_task`).
+- **`BackupMixin`**: respaldo, programación y restauración de bases de datos (`backup_database`, `execute_backup`, `restore_database`).
+- **`UserManagementMixin`**: listado, búsqueda, edición, borrado y contraseñas de usuarios.
+- **`ImportExportMixin`**: importación y exportación de colecciones.
+- **`DatabaseManagementMixin`**: listado/cambio de bases de datos, estadísticas globales, propietarios, detalles y edición de campos.
+- **`IndexManagementMixin`**: consulta, creación y reconstrucción de índices de colecciones.
+
+### `gui/dialogs/`
+
+Diálogos reutilizables extraídos de código inline: selección de colección, creación y borrado de colecciones, importación, exportación y gestión de contraseña.
 
 ### `core/db_manager.py`
 
 Clase `DatabaseManager` con lógica de negocio: `connect`, `set_database`, CRUD, `create_index`/`list_indexes`/`drop_index`, `verify_collection_integrity`, `get_database_statistics`, `get_user_databases`, `cleanup_user_databases`, `export_collection`/`import_collection`, gestión de usuarios. **No importado por la GUI aún** — referencia para futura unificación de capas.
+
+## Estado arquitectónico actual
+
+- La fase activa es la reducción incremental de `gui/main_window.py` mediante extracción a `gui/dialogs/` y `gui/mixins/`.
+- `MainWindow` sigue siendo el coordinador de UI y conexión, pero parte de los dominios de mantenimiento, respaldo, usuarios, import/export, bases de datos e índices ya vive fuera del archivo principal.
+- La siguiente frontera natural es seguir extrayendo bloques cohesivos restantes de `MainWindow` (por ejemplo integridad, tutorial/ayuda o vista de colecciones) antes de unificar con `core/`.
+- `core/db_manager.py` continúa siendo referencia/CLI independiente; no modificarlo para cambios de GUI salvo que se planifique explícitamente la integración de capas.
 
 ## Comandos habituales
 
@@ -45,6 +69,9 @@ python main_gui.py
 
 # Verificar sintaxis sin ejecutar
 venv/bin/python -m py_compile gui/main_window.py
+
+# Verificar sintaxis de los módulos principales
+venv/bin/python -m py_compile main_gui.py gui/main_window.py gui/mixins/*.py gui/dialogs/*.py core/*.py
 
 # Instalar dependencias en el venv
 venv/bin/pip install -r requirements.txt
