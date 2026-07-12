@@ -26,7 +26,7 @@ from .dialogs import (
     PasswordManageDialog,
     CollectionSelectDialog,
 )
-from .mixins import MaintenanceMixin, BackupMixin
+from .mixins import MaintenanceMixin, BackupMixin, UserManagementMixin, ImportExportMixin
 
 # Import sip for handling deleted C++ objects
 try:
@@ -212,7 +212,7 @@ class ConnectionDialog(QDialog):
             except Exception:
                 pass
         super().closeEvent(event)
-class MainWindow(MaintenanceMixin, BackupMixin, QMainWindow):
+class MainWindow(MaintenanceMixin, BackupMixin, UserManagementMixin, ImportExportMixin, QMainWindow):
     """Main application window for MongoDB database management"""
     
     connection_status_changed = pyqtSignal(bool)
@@ -884,6 +884,20 @@ Ejemplos de consultas:
             print(f"Error validando la vista de árbol: {e}")
             return False
 
+    def enable_database_actions(self, enabled):
+        """Habilita/deshabilita las acciones de menú que requieren conexión activa."""
+        action_names = (
+            "disconnect_action", "list_db_action", "list_db_owner_action",
+            "list_table_owners_action", "switch_db_action", "stats_action",
+            "edit_fields_action", "view_collections_action", "create_collection_action",
+            "drop_collection_action", "list_users_action", "search_user_action",
+            "edit_user_action", "password_action", "import_action", "index_action",
+        )
+        for name in action_names:
+            action = getattr(self, name, None)
+            if action is not None:
+                action.setEnabled(enabled)
+
     def update_connection_status(self, connected):
         """Update UI elements based on connection status"""
         try:
@@ -891,10 +905,10 @@ Ejemplos de consultas:
                 # Update connection status label
                 self.connection_status_label.setText(f"Conectado a: {self.database_name}")
                 self.connection_status_label.setStyleSheet("color: green; padding: 3px;")
-                
+
                 # Enable database-related actions
                 self.enable_database_actions(True)
-                
+
                 # Enable tabs
                 if hasattr(self, 'tab_widget'):
                     self.tab_widget.setTabEnabled(1, True)  # Colecciones tab
@@ -903,10 +917,10 @@ Ejemplos de consultas:
                 # Update connection status label
                 self.connection_status_label.setText("No conectado")
                 self.connection_status_label.setStyleSheet("color: red; padding: 3px;")
-                
+
                 # Disable database-related actions
                 self.enable_database_actions(False)
-                
+
                 # Disable tabs
                 if hasattr(self, 'tab_widget'):
                     self.tab_widget.setTabEnabled(1, False)  # Colecciones tab
@@ -914,77 +928,134 @@ Ejemplos de consultas:
         except Exception as e:
             print(f"Error updating connection status: {e}")
             traceback.print_exc()
+
+    def _connect_to_database(self, connection_string, database_name):
+        """Conecta a MongoDB y deja el estado de la ventana listo para usar.
+
+        Crea el MongoClient, hace ping, asigna self.client/self.db/self.database_name/
+        self.connection_string, refresca la UI (colecciones, estadísticas, pestañas) y
+        emite connection_status_changed(True).
+
+        No captura excepciones: el llamador decide cómo informar del fallo.
+        """
+        client = MongoClient(connection_string, serverSelectionTimeoutMS=5000)
+        # Verificar conexión
+        client.admin.command('ping')
+
+        # Guardar referencias
+        self.client = client
+        self.db = client[database_name]
+        self.connection_string = connection_string
+        self.database_name = database_name
+
+        # Actualizar interfaz
+        self.show_status_message(f"Conectado a {database_name}")
+
+        # Habilitar pestañas y acciones
+        self.tab_widget.setTabEnabled(1, True)  # Pestaña de colecciones
+        self.tab_widget.setTabEnabled(2, True)  # Pestaña de consultas
+
+        # Mostrar colecciones
+        self.show_collections()
+
+        # Actualizar estadísticas
+        self.update_database_stats()
+
+        # Enviar señal de conexión establecida
+        self.connection_status_changed.emit(True)
+
+    def initialize_connection(self):
+        """Intento de conexión automática al arrancar, usando MONGODB_URI del entorno.
+
+        Llamado desde main_gui.py vía QTimer.singleShot tras mostrar la ventana. A
+        diferencia de open_connection_dialog, no bloquea el arranque con un QMessageBox
+        si falla: es un intento silencioso, y el usuario siempre puede conectar
+        manualmente después.
+        """
+        if not self.connection_string:
+            return
+        if self.connection_in_progress:
+            return
+
+        database_name = os.environ.get("MONGODB_DATABASE") or self.database_name
+
+        self.connection_in_progress = True
+        self.show_status_message(f"Conectando automáticamente a {database_name}...", timeout=0)
+
+        try:
+            self._connect_to_database(self.connection_string, database_name)
+
+        except (ConnectionFailure, ServerSelectionTimeoutError) as e:
+            print(f"Error de conexión automática: {e}")
+            self.show_status_message(
+                f"No se pudo conectar automáticamente a MongoDB: {e}. "
+                "Use Conexión > Conectar para conectarse manualmente.",
+                error=True,
+            )
+
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al conectar a MongoDB: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
+            print(f"Error inesperado durante la conexión automática: {e}")
+            traceback.print_exc()
+            self.show_status_message(
+                f"Error al conectar automáticamente: {e}. "
+                "Use Conexión > Conectar para conectarse manualmente.",
+                error=True,
+            )
+
+        finally:
             self.connection_in_progress = False
-            self.enable_database_actions(False)
-            
-            # Actualizar estado de la conexión
-            self.connection_status_changed.emit(False)
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al desconectar de MongoDB: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-        
+
     def open_connection_dialog(self):
         """Abrir el diálogo de conexión a MongoDB"""
         try:
             # Crear diálogo de conexión
             dialog = ConnectionDialog(self, self.connection_string)
-            
+
             # Si el diálogo es aceptado
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 # Obtener datos de conexión
                 connection_data = dialog.get_connection_data()
                 connection_string = connection_data["connection_string"]
                 database_name = connection_data["database"]
-                
+
                 # Intentar conectar a MongoDB
                 self.show_status_message(f"Conectando a {database_name}...", timeout=0)
-                
+
                 try:
-                    # Crear cliente MongoDB
-                    client = MongoClient(connection_string, serverSelectionTimeoutMS=5000)
-                    # Verificar conexión
-                    client.admin.command('ping')
-                    
-                    # Guardar referencias
-                    self.client = client
-                    self.db = client[database_name]
-                    self.connection_string = connection_string
-                    self.database_name = database_name
-                    
-                    # Actualizar interfaz
-                    self.show_status_message(f"Conectado a {database_name}")
-                    
-                    # Habilitar pestañas y acciones
-                    self.tab_widget.setTabEnabled(1, True)  # Pestaña de colecciones
-                    self.tab_widget.setTabEnabled(2, True)  # Pestaña de consultas
-                    
-                    # Mostrar colecciones
-                    self.show_collections()
-                    
-                    # Actualizar estadísticas
-                    self.update_database_stats()
-                    
-                    # Enviar señal de conexión establecida
-                    self.connection_status_changed.emit(True)
-                    
+                    self._connect_to_database(connection_string, database_name)
+
                 except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-                    QMessageBox.critical(self, "Error de Conexión", 
+                    QMessageBox.critical(self, "Error de Conexión",
                                         f"No se pudo conectar a MongoDB: {str(e)}\n\n"
                                         "Verifique la cadena de conexión y que el servidor esté en ejecución.")
                     self.show_status_message("Error de conexión", error=True)
-                    
+
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Error al conectar a MongoDB: {str(e)}")
                     self.show_status_message(f"Error: {str(e)}", error=True)
-        
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al abrir diálogo de conexión: {str(e)}")
             self.show_status_message(f"Error: {str(e)}", error=True)
-            
+
+    def disconnect_database(self):
+        """Cierra la conexión activa a MongoDB y deja la ventana en estado 'no conectado'."""
+        try:
+            if self.client is not None:
+                self.client.close()
+        except Exception as e:
+            print(f"Error closing MongoDB connection: {e}")
+        finally:
+            self.client = None
+            self.db = None
+            self.current_collection = None
+
+        if hasattr(self, 'collections_model') and self.collections_model is not None:
+            self.collections_model.clear()
+
+        self.show_status_message("Desconectado de MongoDB")
+        self.connection_status_changed.emit(False)
+
     def setup_menu_bar(self):
         """Configura la barra de menús con los menús y acciones necesarios"""
         menu_bar = self.menuBar()
@@ -2558,225 +2629,6 @@ Ejemplos de consultas:
             self.results_view.setPlainText(f"Error executing query: {str(e)}")
             self.show_status_message(f"Error: {str(e)}", error=True)
     
-    def import_data(self):
-        """Import data from JSON or CSV file into a collection"""
-        if self.db is None:
-            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
-            return
-            
-        # Seleccionar archivo a importar
-        from PyQt6.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Seleccionar archivo a importar",
-            "",
-            "Archivos JSON (*.json);;Archivos CSV (*.csv);;Todos los archivos (*.*)"
-        )
-        if not file_path:
-            return
-            
-        # Select target collection
-        collections = self.db.list_collection_names()
-        
-        dialog = ImportDialog(self, collections)
-        if not dialog.exec():
-            return
-            
-        target_collection = dialog.get_target_collection()
-        clear_collection = dialog.should_clear_collection()
-        
-        if not target_collection:
-            QMessageBox.warning(self, "Advertencia", "No se ha especificado una colección destino")
-            return
-            
-        # Import data based on file type
-        try:
-            if file_path.lower().endswith('.json'):
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    import json
-                    data = json.load(f)
-                    
-                    # Get or create collection
-                    collection = self.db[target_collection]
-                    
-                    # Clear collection if requested
-                    if clear_collection:
-                        collection.delete_many({})
-                    
-                    # Insert data
-                    if isinstance(data, list):
-                        if data:
-                            result = collection.insert_many(data)
-                            inserted_count = len(result.inserted_ids)
-                        else:
-                            inserted_count = 0
-                    else:
-                        result = collection.insert_one(data)
-                        inserted_count = 1
-                        
-                    # Update UI
-                    self.show_collections()
-                    self.update_database_stats()
-                    self.show_status_message(f"Imported {inserted_count} documents into collection '{target_collection}'")
-                    
-                    QMessageBox.information(
-                        self,
-                        "Importación Exitosa",
-                        f"Se importaron con éxito {inserted_count} documentos en la colección '{target_collection}'"
-                    )
-                    
-            elif file_path.lower().endswith('.csv'):
-                # Import CSV file
-                try:
-                    import csv
-                    
-                    # Read CSV file
-                    with open(file_path, 'r', encoding='utf-8-sig') as f:
-                        csv_reader = csv.DictReader(f)
-                        data = list(csv_reader)
-                        
-                    if not data:
-                        QMessageBox.warning(self, "Advertencia", "El archivo CSV está vacío o tiene un formato inválido")
-                        return
-                        
-                    # Get or create collection
-                    collection = self.db[target_collection]
-                    
-                    # Clear collection if requested
-                    if clear_collection:
-                        collection.delete_many({})
-                        
-                    # Insert data
-                    result = collection.insert_many(data)
-                    inserted_count = len(result.inserted_ids)
-                    
-                    # Update UI
-                    self.show_collections()
-                    self.update_database_stats()
-                    self.show_status_message(f"Imported {inserted_count} documents from CSV into collection '{target_collection}'")
-                    
-                    QMessageBox.information(
-                        self,
-                        "Importación Exitosa",
-                        f"Se importaron con éxito {inserted_count} documentos CSV en la colección '{target_collection}'"
-                    )
-                    
-                except Exception as e:
-                    QMessageBox.critical(self, "Error de importación CSV", f"Error al importar CSV: {str(e)}")
-                    self.show_status_message(f"Error: {str(e)}", error=True)
-                    
-            else:
-                QMessageBox.warning(self, "Tipo de archivo no soportado", "Solo se soportan archivos JSON y CSV")
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error de importación", f"Error al importar datos: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-    
-    def export_data(self):
-        """Export data from a collection to JSON or CSV file"""
-        if self.db is None:
-            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
-            return
-            
-        from PyQt6.QtWidgets import QFileDialog
-        
-        # Select collection to export
-        collections = self.db.list_collection_names()
-        
-        if not collections:
-            QMessageBox.information(self, "Información", "No hay colecciones para exportar")
-            return
-            
-        dialog = ExportDialog(self, collections)
-        if not dialog.exec():
-            return
-            
-        # Get selected collection and format
-        collection_name = dialog.get_selected_collection()
-        export_format = dialog.get_export_format()
-        
-        if not collection_name:
-            return
-            
-        # Choose export file path
-        if export_format == "json":
-            file_filter = "JSON Files (*.json)"
-            default_suffix = ".json"
-        else:  # CSV
-            file_filter = "CSV Files (*.csv)"
-            default_suffix = ".csv"
-            
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Exportar Colección",
-            f"{collection_name}{default_suffix}",
-            file_filter
-        )
-        
-        if not file_path:
-            return
-            
-        # Fetch data
-        try:
-            collection = self.db[collection_name]
-            documents = list(collection.find({}))
-            
-            if not documents:
-                QMessageBox.information(
-                    self,
-                    "Export Information",
-                    f"La colección '{collection_name}' está vacía. No hay nada para exportar."
-                )
-                return
-                
-            # Export based on format
-            if export_format == "json":
-                # Export as JSON
-                import json
-                
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    # Convert ObjectId to string for JSON serialization
-                    json.dump(documents, f, default=str, indent=2)
-                    
-                self.show_status_message(f"Exported {len(documents)} documents to {file_path}")
-                
-            else:  # CSV
-                # Export as CSV
-                import csv
-                
-                # Get all field names from all documents
-                field_names = set()
-                for doc in documents:
-                    field_names.update(doc.keys())
-                    
-                # Ensure _id is first if present
-                if '_id' in field_names:
-                    field_names.remove('_id')
-                    field_names = ['_id'] + sorted(field_names)
-                else:
-                    field_names = sorted(field_names)
-                    
-                with open(file_path, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=field_names)
-                    writer.writeheader()
-                    
-                    for doc in documents:
-                        # Convert ObjectId and other MongoDB types to string
-                        row = {k: str(v) for k, v in doc.items()}
-                        writer.writerow(row)
-                        
-                self.show_status_message(f"Exported {len(documents)} documents to {file_path}")
-                
-            QMessageBox.information(
-                self,
-                "Exportación Exitosa",
-                f"Se exportaron con éxito {len(documents)} documentos a {file_path}"
-            )
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error de exportación", f"Error al exportar datos: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-    
     def show_about(self):
         """Show information about the application"""
         about_text = """
@@ -2905,484 +2757,6 @@ Ejemplos de consultas:
             self.data_table.setAlternatingRowColors(True)
         if hasattr(self, 'results_view'):
             self.results_view.setStyleSheet(f"QTextEdit {{ background-color: {bg_color}; color: {fg_color}; }}")
-        
-    def list_users(self):
-        """List all users from the unified users collection"""
-        if self.db is None:
-            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
-            return
-            
-        try:
-            # Use the unified users collection
-            collection_name = 'users_unified'
-            
-            # Check if the unified collection exists
-            if collection_name not in self.db.list_collection_names():
-                QMessageBox.information(self, "Información", "No se encontró la colección unificada de usuarios. Por favor, ejecute la normalización primero.")
-                return
-            
-            # Get all users from the unified collection
-            all_users = list(self.db[collection_name].find())
-            if not all_users:
-                QMessageBox.information(self, "Información", "No se encontraron usuarios en la base de datos")
-                return
-                
-            # Create dialog to show users
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Lista de Usuarios")
-            dialog.resize(800, 500)
-            
-            layout = QVBoxLayout(dialog)
-            
-            # Status information
-            info_label = QLabel(f"Mostrando {len(all_users)} usuarios de la colección unificada")
-            info_label.setStyleSheet("color: #3498db; font-weight: bold;")
-            layout.addWidget(info_label)
-            
-            # Create table
-            table = QTableWidget()
-            table.setColumnCount(5)
-            table.setHorizontalHeaderLabels(["ID", "Nombre", "Email", "Rol", "Colección Original"])
-            table.setRowCount(len(all_users))
-            
-            # Fill table
-            for i, user in enumerate(all_users):
-                table.setItem(i, 0, QTableWidgetItem(str(user.get('_id', ''))))
-                table.setItem(i, 1, QTableWidgetItem(user.get('name', '')))
-                table.setItem(i, 2, QTableWidgetItem(user.get('email', '')))
-                table.setItem(i, 3, QTableWidgetItem(user.get('role', 'user')))
-                # Use _source_collection if available, otherwise fallback to _collection or default value
-                collection_name = user.get('_source_collection', user.get('_collection', 'users_unified'))
-                table.setItem(i, 4, QTableWidgetItem(collection_name))
-            layout.addWidget(table)
-            
-            # Add buttons
-            button_layout = QHBoxLayout()
-            
-            edit_button = QPushButton("Editar Seleccionado")
-            edit_button.setStyleSheet("background-color: #3498db; color: white;")
-            edit_button.clicked.connect(lambda: self.edit_selected_user(table, all_users, dialog))
-            button_layout.addWidget(edit_button)
-            
-            close_button = QPushButton("Cerrar")
-            close_button.clicked.connect(dialog.reject)
-            button_layout.addWidget(close_button)
-            
-            layout.addLayout(button_layout)
-            
-            # Set table properties
-            table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-            table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-            table.setAlternatingRowColors(True)
-            table.resizeColumnsToContents()
-            
-            dialog.exec()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al listar usuarios: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-    def show_user_results(self, users):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Resultados de Búsqueda de Usuario")
-        dialog.resize(800, 500)
-        
-        layout = QVBoxLayout(dialog)
-        
-        # Add results information
-        info_label = QLabel(f"Se encontraron {len(users)} usuarios")
-        info_label.setStyleSheet("color: #3498db; font-weight: bold; margin-bottom: 10px;")
-        layout.addWidget(info_label)
-        
-        # Create table
-        table = QTableWidget()
-        table.setColumnCount(5)
-        table.setHorizontalHeaderLabels(["ID", "Nombre", "Email", "Rol", "Colección Original"])
-        table.setRowCount(len(users))
-        
-        # Fill table with standard field names from unified collection
-        for i, user in enumerate(users):
-            table.setItem(i, 0, QTableWidgetItem(str(user.get('_id', ''))))
-            table.setItem(i, 1, QTableWidgetItem(user.get('name', '')))  # Using standardized field name
-            table.setItem(i, 2, QTableWidgetItem(user.get('email', '')))
-            table.setItem(i, 3, QTableWidgetItem(user.get('role', 'user')))  # Using standardized field name
-            # Use _source_collection if available, otherwise fallback to _collection or default value
-            collection_name = user.get('_source_collection', user.get('_collection', 'users_unified'))
-            table.setItem(i, 4, QTableWidgetItem(collection_name))
-        
-        # Configure table properties
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        table.setAlternatingRowColors(True)
-        table.resizeColumnsToContents()
-        
-        layout.addWidget(table)
-        
-        # Add edit and close buttons
-        button_layout = QHBoxLayout()
-        
-        edit_button = QPushButton("Editar Seleccionado")
-        edit_button.setStyleSheet("background-color: #3498db; color: white;")
-        edit_button.clicked.connect(lambda: self.edit_selected_user(table, users, dialog))
-        button_layout.addWidget(edit_button)
-        
-        close_button = QPushButton("Cerrar")
-        close_button.clicked.connect(dialog.reject)
-        button_layout.addWidget(close_button)
-        
-        layout.addLayout(button_layout)
-        
-        dialog.exec()
-    def edit_selected_user(self, table, users, dialog):
-        """Editar el usuario seleccionado de los resultados de búsqueda"""
-        selected_row = table.currentRow()
-        if selected_row < 0:
-            QMessageBox.warning(self, "Advertencia", "Por favor seleccione un usuario para editar")
-            return
-            
-        user = users[selected_row]
-        user_id = user['_id']
-        
-        # Get collection name with fallbacks to ensure we always have a valid value
-        collection_name = user.get('_source_collection', 
-                              user.get('_collection', 'users_unified'))
-        
-        # Cerrar el diálogo de resultados
-        dialog.accept()
-        
-        # Abrir el diálogo de edición
-        self.edit_user(user_id, collection_name)
-    def edit_user(self, user_id=None, collection_name=None):
-        """Editar información de usuario"""
-        if self.db is None:
-            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
-            return
-            
-        try:
-            # Si no se proporcionan user_id y collection_name, pedir al usuario que busque primero
-            if user_id is None or collection_name is None:
-                QMessageBox.information(self, "Información", "Utilice la función de búsqueda para encontrar un usuario a editar")
-                self.search_user()
-                return
-                
-            # Obtener documento del usuario
-            from bson.objectid import ObjectId
-            if isinstance(user_id, str):
-                user_id = ObjectId(user_id)
-                
-            user = self.db[collection_name].find_one({'_id': user_id})
-            if not user:
-                QMessageBox.warning(self, "Advertencia", f"Usuario con ID {user_id} no encontrado en {collection_name}")
-                return
-                
-            # Crear diálogo de edición
-            dialog = QDialog(self)
-            dialog.setWindowTitle(f"Editar Usuario - {collection_name}")
-            dialog.resize(450, 400)
-            
-            layout = QVBoxLayout(dialog)
-            
-            # Diseño de formulario para campos
-            form_layout = QFormLayout()
-            
-            # Mostrar información actual del usuario
-            id_label = QLabel(str(user_id))
-            form_layout.addRow("ID de Usuario:", id_label)
-            
-            # Campos editables
-            name_input = QLineEdit(user.get('nombre', user.get('name', '')))
-            form_layout.addRow("Nombre:", name_input)
-            
-            email_input = QLineEdit(user.get('email', ''))
-            form_layout.addRow("Email:", email_input)
-            
-            role_combo = QComboBox()
-            role_combo.addItems(['normal', 'admin', 'supervisor', 'editor'])
-            current_role = user.get('role', user.get('rol', 'normal'))
-            role_combo.setCurrentText(current_role)
-            form_layout.addRow("Rol:", role_combo)
-            
-            layout.addLayout(form_layout)
-            
-            # Botones de acción
-            button_layout = QHBoxLayout()
-            
-            save_button = QPushButton("Guardar")
-            save_button.setStyleSheet("background-color: #2ecc71;")
-            save_button.clicked.connect(dialog.accept)
-            button_layout.addWidget(save_button)
-            
-            delete_button = QPushButton("Eliminar Usuario")
-            delete_button.setStyleSheet("background-color: #e74c3c;")
-            delete_button.clicked.connect(lambda: self.delete_user(user_id, collection_name, dialog))
-            button_layout.addWidget(delete_button)
-            
-            cancel_button = QPushButton("Cancelar")
-            cancel_button.clicked.connect(dialog.reject)
-            button_layout.addWidget(cancel_button)
-            
-            layout.addLayout(button_layout)
-            
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-                
-            # Obtener valores actualizados
-            new_name = name_input.text().strip()
-            new_email = email_input.text().strip()
-            new_role = role_combo.currentText()
-            
-            # Validar entradas
-            if not new_name or not new_email:
-                QMessageBox.warning(self, "Advertencia", "El nombre y email son obligatorios")
-                return
-                
-            # Preparar actualización
-            update_fields = {}
-            if 'nombre' in user:
-                update_fields['nombre'] = new_name
-            elif 'name' in user:
-                update_fields['name'] = new_name
-            else:
-                update_fields['nombre'] = new_name
-                
-            update_fields['email'] = new_email
-            
-            if 'role' in user:
-                update_fields['role'] = new_role
-            elif 'rol' in user:
-                update_fields['rol'] = new_role
-            else:
-                update_fields['role'] = new_role
-                
-            # Actualizar usuario
-            result = self.db[collection_name].update_one(
-                {'_id': user_id},
-                {'$set': update_fields}
-            )
-            
-            if result.modified_count > 0:
-                QMessageBox.information(self, "Éxito", f"La información del usuario ha sido actualizada correctamente")
-                self.show_status_message("Usuario actualizado correctamente")
-            else:
-                QMessageBox.warning(self, "Advertencia", f"La información del usuario no ha sido actualizada")
-                self.show_status_message("Usuario no actualizado", error=True)
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al actualizar el usuario: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-
-    def delete_user(self, user_id, collection_name, parent_dialog=None):
-        """Eliminar un usuario de la base de datos"""
-        if self.db is None:
-            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
-            return
-            
-        try:
-            # Confirmación de eliminación
-            confirm = QMessageBox.question(
-                self,
-                "Confirmar Eliminación",
-                f"¿Está seguro de que desea eliminar este usuario?\nEsta acción no se puede deshacer.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            
-            if confirm != QMessageBox.StandardButton.Yes:
-                return
-                
-            # Eliminar usuario
-            from bson.objectid import ObjectId
-            if isinstance(user_id, str):
-                user_id = ObjectId(user_id)
-                
-            result = self.db[collection_name].delete_one({'_id': user_id})
-            
-            # Cerrar diálogo padre si existe
-            if parent_dialog:
-                parent_dialog.accept()
-                
-            if result.deleted_count > 0:
-                QMessageBox.information(self, "Éxito", f"Usuario eliminado correctamente")
-                self.show_status_message("Usuario eliminado correctamente")
-            else:
-                QMessageBox.warning(self, "Advertencia", f"No se pudo eliminar el usuario")
-                self.show_status_message("Error al eliminar usuario", error=True)
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al eliminar el usuario: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-
-    def manage_password(self):
-        """Gestionar contraseñas de usuarios"""
-        if self.db is None:
-            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
-            return
-            
-        try:
-            dialog = PasswordManageDialog(self)
-            
-            # Conectar señales a slots
-            dialog.search_button.clicked.connect(lambda: self.search_user_for_password(dialog))
-            dialog.save_button.clicked.connect(lambda: self.update_user_password(dialog))
-            dialog.cancel_button.clicked.connect(dialog.reject)
-            
-            # Mostrar el diálogo
-            dialog.exec()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al gestionar contraseñas: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-            
-    def update_user_password(self, dialog):
-        """Actualizar la contraseña de un usuario seleccionado"""
-        try:
-            # Verificar si se seleccionó un usuario
-            if not dialog.selected_user:
-                QMessageBox.warning(self, "Advertencia", "Por favor, busque y seleccione un usuario primero")
-                return
-                
-            # Obtener contraseñas
-            new_password = dialog.password_input.text()
-            confirm_password = dialog.confirm_input.text()
-            
-            # Validar que las contraseñas coinciden
-            if new_password != confirm_password:
-                QMessageBox.warning(self, "Advertencia", "Las contraseñas no coinciden")
-                return
-                
-            # Validar que la contraseña no esté vacía
-            if not new_password:
-                QMessageBox.warning(self, "Advertencia", "La contraseña no puede estar vacía")
-                return
-                
-            # Validar seguridad de la contraseña
-            if len(new_password) < 8:
-                QMessageBox.warning(self, "Advertencia", "La contraseña debe tener al menos 8 caracteres")
-                return
-                
-            # Obtener usuario y colección
-            user = dialog.selected_user
-            collection_name = dialog.selected_collection
-            user_id = user['_id']
-            
-            # Hashear la contraseña (en una aplicación real se usaría un algoritmo más seguro)
-            import hashlib
-            # Utilizamos un hash simple para este ejemplo
-            hashed_password = hashlib.sha256(new_password.encode()).hexdigest()
-            
-            # Actualizar la contraseña en la base de datos
-            result = self.db[collection_name].update_one(
-                {'_id': user_id},
-                {'$set': {'password': hashed_password, 'password_changed_at': datetime.datetime.now()}}
-            )
-            
-            if result.modified_count > 0:
-                QMessageBox.information(
-                    self,
-                    "Éxito",
-                    "La contraseña se ha actualizado correctamente"
-                )
-                dialog.accept()
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Advertencia",
-                    "No se pudo actualizar la contraseña"
-                )
-                
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al actualizar la contraseña: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-
-    def search_user_for_password(self, dialog):
-        """Buscar un usuario para asociarlo al diálogo de cambio de contraseña"""
-        try:
-            search_text = dialog.search_text.text().strip()
-            if not search_text:
-                QMessageBox.warning(self, "Advertencia", "Introduzca un texto de búsqueda")
-                return
-
-            collection_name = 'users_unified'
-            found_users = []
-
-            if dialog.search_type.currentText() == "Por ID":
-                from bson.objectid import ObjectId
-                try:
-                    query = {'_id': ObjectId(search_text)}
-                except Exception:
-                    QMessageBox.warning(self, "Advertencia", "ID de usuario no válido")
-                    return
-            elif dialog.search_type.currentText() == "Por Nombre":
-                query = {'$or': [
-                    {'nombre': {'$regex': search_text, '$options': 'i'}},
-                    {'name': {'$regex': search_text, '$options': 'i'}}
-                ]}
-            elif dialog.search_type.currentText() == "Por Email":
-                query = {'email': {'$regex': search_text, '$options': 'i'}}
-
-            # Buscar usuarios que coincidan con la consulta
-            users = list(self.db[collection_name].find(query))
-            for user in users:
-                # Store source collection consistently
-                user['_source_collection'] = collection_name
-                found_users.append(user)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al buscar el usuario: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-            return
-
-        if not found_users:
-            QMessageBox.information(dialog, "Información", "No se encontraron usuarios que coincidan con los criterios")
-            return
-            
-        # Si hay múltiples usuarios, mostrar un diálogo de selección
-        if len(found_users) > 1:
-            user_select = QDialog(dialog)
-            user_select.setWindowTitle("Seleccionar Usuario")
-            user_select.resize(400, 300)
-            
-            layout = QVBoxLayout(user_select)
-            layout.addWidget(QLabel("Múltiples usuarios encontrados. Seleccione uno:"))
-            
-            user_list = QListWidget()
-            for user in found_users:
-                user_name = user.get('nombre', user.get('name', 'Sin nombre'))
-                user_email = user.get('email', 'Sin email')
-                user_list.addItem(f"{user_name} ({user_email}) - {user.get('_source_collection', 'users_unified')}")
-            
-            buttons = QDialogButtonBox(
-                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-            )
-            buttons.accepted.connect(user_select.accept)
-            buttons.rejected.connect(user_select.reject)
-            layout.addWidget(buttons)
-            
-            if user_select.exec() != QDialog.DialogCode.Accepted:
-                return
-                
-            selected_idx = user_list.currentRow()
-            if selected_idx < 0:
-                return
-                
-            selected_user = found_users[selected_idx]
-        else:
-            # Solo un usuario encontrado
-            selected_user = found_users[0]
-            
-        # Actualizar diálogo con información del usuario seleccionado
-        user_name = selected_user.get('nombre', selected_user.get('name', 'Sin nombre'))
-        user_email = selected_user.get('email', 'Sin email')
-        dialog.user_label.setText(f"Usuario seleccionado: {user_name} ({user_email})")
-        dialog.user_label.setStyleSheet("font-weight: bold; color: #3498db;")
-        
-        # Habilitar campos de contraseña
-        dialog.password_input.setEnabled(True)
-        dialog.confirm_input.setEnabled(True)
-        dialog.save_button.setEnabled(True)
-        
-        # Guardar referencia al usuario seleccionado
-        dialog.selected_user = selected_user
-        dialog.selected_collection = selected_user.get('_source_collection', selected_user.get('_collection', 'users_unified'))
-    
         
     def show_databases(self):
         """Mostrar todas las bases de datos disponibles"""
