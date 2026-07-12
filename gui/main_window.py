@@ -12,12 +12,12 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QStatusBar, QMessageBox,
     QMenu, QMenuBar, QDialog, QLineEdit, QFormLayout, QDialogButtonBox,
     QComboBox, QTableWidget, QTableWidgetItem, QSplitter, QTreeView,
-    QTreeWidget, QTextEdit, QToolBar, QStyle, QListWidget, QCheckBox, QFrame,
+    QTreeWidget, QTextEdit, QToolBar, QStyle, QListWidget, QListWidgetItem, QCheckBox, QFrame,
     QProgressDialog, QGroupBox, QFileDialog, QRadioButton, QButtonGroup,
     QStackedWidget, QTimeEdit, QScrollArea, QLayout
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QTime, QDateTime, QDate
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QFont, QIcon
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QFont, QIcon, QAction
 from .dialogs import (
     CreateCollectionDialog,
     DropCollectionDialog,
@@ -26,6 +26,7 @@ from .dialogs import (
     PasswordManageDialog,
     CollectionSelectDialog,
 )
+from .mixins import MaintenanceMixin, BackupMixin
 
 # Import sip for handling deleted C++ objects
 try:
@@ -211,7 +212,7 @@ class ConnectionDialog(QDialog):
             except Exception:
                 pass
         super().closeEvent(event)
-class MainWindow(QMainWindow):
+class MainWindow(MaintenanceMixin, BackupMixin, QMainWindow):
     """Main application window for MongoDB database management"""
     
     connection_status_changed = pyqtSignal(bool)
@@ -244,12 +245,36 @@ class MainWindow(QMainWindow):
         
         # Track widget validity
         self._widgets_initialized = False
+
+        # Modo de vista del árbol de colecciones: 0=jerárquica, 1=por propietario, 2=por tipo, 3=plana
+        self.view_mode = 0
         
         # Try to get connection string from environment variables
         self.connection_string = os.environ.get("MONGODB_URI", "")
         print(f"Initial connection string: {'Found (length: ' + str(len(self.connection_string)) + ')' if self.connection_string else 'Not found'}")
         self.database_name = "app_catalogojoyero"
-    
+
+        # Construir la interfaz de usuario
+        self.tab_widget = QTabWidget()
+        self.setCentralWidget(self.tab_widget)
+
+        self.setup_dashboard_tab()
+        self.setup_collections_tab()
+        self.setup_query_tab()
+        self.setup_menu_bar()
+
+        self.connection_status_label = QLabel("No conectado")
+        self.connection_status_label.setStyleSheet("color: red; padding: 3px;")
+        self.statusBar().addPermanentWidget(self.connection_status_label)
+
+        self.connection_status_changed.connect(self.update_connection_status)
+
+        # Deshabilitar pestañas que requieren conexión hasta que se establezca
+        self.tab_widget.setTabEnabled(1, False)  # Colecciones
+
+        self.setWindowTitle("Gestor de Base de Datos MongoDB")
+        self.resize(1000, 700)
+
     def setup_dashboard_tab(self):
         """Configurar la pestaña de panel de control"""
         # Crear widget contenedor
@@ -303,104 +328,7 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
         
         # Agregar la pestaña al widget de pestañas
         self.tab_widget.addTab(dashboard_widget, "Panel de Control")
-        
-        collections_button_layout.addWidget(create_button)
-        
-        drop_button = QPushButton("Eliminar")
-        drop_button.clicked.connect(self.drop_collection)
-        collections_button_layout.addWidget(drop_button)
-        
-        refresh_button = QPushButton("Actualizar")
-        refresh_button.clicked.connect(self.show_collections)
-        collections_button_layout.addWidget(refresh_button)
-        
-        # Añadir botón para ver propietarios de colecciones
-        owner_button = QPushButton("Propietarios")
-        owner_button.clicked.connect(self.show_collection_owners)
-        owner_button.setToolTip("Ver propietarios de las colecciones")
-        collections_button_layout.addWidget(owner_button)
-        
-        tree_layout.addWidget(collections_buttons)
-        
-        left_layout.addWidget(self.tree_widget)
-        
-        # Panel derecho: visualización de datos
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        
-        # Panel de información general
-        info_panel = QWidget()
-        info_layout = QVBoxLayout(info_panel)
-        
-        self.collection_info_label = QLabel("Seleccione una colección para ver sus detalles")
-        self.collection_info_label.setWordWrap(True)
-        info_layout.addWidget(self.collection_info_label)
-        
-        info_panel.setLayout(info_layout)
-        right_layout.addWidget(info_panel, 1)  # 20% del espacio vertical
-        
-        # Panel de pestañas para diferentes vistas
-        self.collection_view_tabs = QTabWidget()
-        
-        # Pestaña de datos
-        data_tab = QWidget()
-        data_tab_layout = QVBoxLayout(data_tab)
-        
-        data_label = QLabel("Contenido de la Colección:")
-        data_tab_layout.addWidget(data_label)
-        
-        # Create data table if it doesn't exist yet
-        if not hasattr(self, 'data_table') or self.data_table is None or sip.isdeleted(self.data_table):
-            self.data_table = QTableWidget()
-            self.data_table.setAlternatingRowColors(True)
-        data_tab_layout.addWidget(self.data_table)
-        
-        self.collection_view_tabs.addTab(data_tab, "Datos")
-        
-        # Create tables tab
-        tables_tab = QWidget()
-        tables_layout = QVBoxLayout(tables_tab)
-        
-        tables_label = QLabel("Mapeo de Tablas para esta Colección:")
-        tables_layout.addWidget(tables_label)
-        
-        self.tables_tree = QTreeWidget()
-        self.tables_tree.setHeaderLabels(["Tabla", "Tipo", "Campos"])
-        self.tables_tree.setAlternatingRowColors(True)
-        tables_layout.addWidget(self.tables_tree)
-        
-        self.collection_view_tabs.addTab(tables_tab, "Relaciones de Tablas")
-        
-        # Pestaña de metadatos
-        metadata_tab = QWidget()
-        metadata_layout = QVBoxLayout(metadata_tab)
-        
-        metadata_label = QLabel("Metadatos de la Colección:")
-        metadata_layout.addWidget(metadata_label)
-        
-        self.metadata_table = QTableWidget()
-        self.metadata_table.setColumnCount(2)
-        self.metadata_table.setHorizontalHeaderLabels(["Propiedad", "Valor"])
-        self.metadata_table.setAlternatingRowColors(True)
-        metadata_layout.addWidget(self.metadata_table)
-        
-        self.collection_view_tabs.addTab(metadata_tab, "Metadatos")
-        
-        right_layout.addWidget(self.collection_view_tabs, 4)  # 80% del espacio vertical
-        
-        # Agregar paneles al splitter
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        
-        # Establecer proporción del splitter (30% izquierda, 70% derecha)
-        splitter.setSizes([300, 700])
-        
-        # Agregar splitter al layout principal
-        layout.addWidget(splitter)
-        
-        # Agregar la pestaña al widget de pestañas
-        self.tab_widget.addTab(collections_widget, "Colecciones")
-        
+
     def setup_collections_tab(self):
         """Configurar la pestaña de colecciones"""
         # Crear widget contenedor
@@ -546,153 +474,101 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
         
         # Mark widgets as initialized
         self._widgets_initialized = True
-        self.collections_tree = QTreeView(self.tree_widget)
-        self.collections_tree.setHeaderHidden(True)
-        self.collections_tree.setMinimumWidth(250)
-        self.collections_tree.setObjectName("collectionsTreeView")
-        tree_layout.addWidget(self.collections_tree)
-        
-        # Store reference to the layout for recreation if needed
-        self._tree_layout = tree_layout
-        self._tree_destroyed = False
-        
-        # Connect signals right after creation to ensure widget isn't deleted
+
+    def show_collections(self):
+        """Mostrar las colecciones de la base de datos en el árbol, según el modo de vista activo."""
+        if self.db is None:
+            return
+
         try:
-            if hasattr(self, 'collections_tree') and self.collections_tree and not sip.isdeleted(self.collections_tree):
-                self.collections_tree.doubleClicked.connect(self.view_collection_data)
-                print("Collections tree signals connected during initial setup")
-            else:
-                print("Warning: Collections tree is not valid during setup")
-        except Exception as e:
-            print(f"Error connecting collections tree signals during setup: {str(e)}")
-            
-        collections_buttons = QWidget()
-        collections_button_layout = QHBoxLayout(collections_buttons)
-        
-        create_button = QPushButton("Crear")
-        create_button.clicked.connect(self.create_collection)
-        collections_button_layout.addWidget(create_button)
-        drop_button = QPushButton("Eliminar")
-        drop_button.clicked.connect(self.drop_collection)
-        collections_button_layout.addWidget(drop_button)
-        
-        refresh_button = QPushButton("Actualizar")
-        refresh_button.clicked.connect(self.show_collections)
-        collections_button_layout.addWidget(refresh_button)
-        
-        # Añadir botón para ver propietarios de colecciones
-        owner_button = QPushButton("Propietarios")
-        owner_button.clicked.connect(self.show_collection_owners)
-        owner_button.setToolTip("Ver propietarios de las colecciones")
-        collections_button_layout.addWidget(owner_button)
-        
-        tree_layout.addWidget(collections_buttons)
-        
-        left_layout.addWidget(self.tree_widget)
-        
-        # Crear el item de la base de datos para la vista jerárquica
-        db_item = QStandardItem(self.database_name)
-        db_item.setEditable(False)
-        db_item.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon))
-        
-        # Guardar referencia al item de la base de datos
-        self._db_items[self.database_name] = db_item
-        
-        # Añadir al modelo
-        root_item.appendRow(db_item)
-        
-        # Obtener la lista de colecciones de la base de datos
-        try:
+            if not self.is_tree_view_valid():
+                if not self.ensure_tree_view_exists():
+                    print("No se pudo preparar la vista de árbol de colecciones")
+                    return
+
+            self.collections_model.clear()
+            self._model_items.clear()
+            self._db_items.clear()
+            if hasattr(self, '_collections_refs'):
+                self._collections_refs.clear()
+
+            root_item = self.collections_model.invisibleRootItem()
+
+            # Crear el item de la base de datos para la vista jerárquica
+            db_item = QStandardItem(self.database_name)
+            db_item.setEditable(False)
+            db_item.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon))
+
+            self._db_items[self.database_name] = db_item
+            root_item.appendRow(db_item)
+
+            # Obtener la lista de colecciones de la base de datos
             collections = self.db.list_collection_names()
             total_collections = len(collections)
             print(f"Found {total_collections} collections in database {self.database_name}")
-        except Exception as e:
-            print(f"Error getting collections: {e}")
-            QMessageBox.critical(self, "Error", f"No se pudieron obtener las colecciones: {str(e)}")
-            return
-                
-            # Crear diferentes vistas según el modo seleccionado
-            if view_mode == 0:  # Vista jerárquica - usar el db_item existente
-                pass
-            elif view_mode == 1:  # Agrupado por usuario
-                if root_item.rowCount() > 0:
-                    root_item.removeRow(0)  # Eliminar db_item para crear otra vista
+
+            view_mode = getattr(self, 'view_mode', 0)
+
+            # Vistas agrupadas: eliminar el db_item de la vista jerárquica y delegar
+            if view_mode == 1:  # Agrupado por propietario
+                root_item.removeRow(0)
                 self.create_user_grouped_view(self.collections_model, collections)
-                return  # Salir ya que la función anterior maneja todo
+                return
             elif view_mode == 2:  # Agrupado por tipo
-                if root_item.rowCount() > 0:
-                    root_item.removeRow(0)  # Eliminar db_item para crear otra vista
+                root_item.removeRow(0)
                 self.create_type_grouped_view(self.collections_model, collections)
-                return  # Salir ya que la función anterior maneja todo
-            else:  # Vista plana
-                if root_item.rowCount() > 0:
-                    root_item.removeRow(0)  # Eliminar db_item para crear otra vista
+                return
+            elif view_mode == 3:  # Vista plana
+                root_item.removeRow(0)
                 self.create_flat_view(self.collections_model, collections)
-                return  # Salir ya que la función anterior maneja todo
-                
-            # Si llegamos aquí, estamos en la vista jerárquica (view_mode == 0)
-            # Mostrar diálogo de progreso para colecciones grandes
+                return
+
+            # Vista jerárquica (view_mode == 0): mostrar diálogo de progreso para colecciones grandes
             progress = None
             if total_collections > 10:
                 progress = QProgressDialog("Cargando colecciones...", "Cancelar", 0, total_collections, self)
                 progress.setWindowModality(Qt.WindowModality.WindowModal)
                 progress.setMinimumDuration(500)  # Solo mostrar si tarda más de 500ms
-            
-            # Procesar colecciones en lotes para mejor rendimiento
+
             collection_items_batch = []
             batch_size = 10
-            
-            # Procesar cada colección
+
             for i, collection_name in enumerate(collections):
+                if progress and progress.wasCanceled():
+                    break
+
+                try:
+                    doc_count = self.db[collection_name].count_documents({})
+                except Exception:
+                    doc_count = 0
+
+                collection_item = QStandardItem(f"{collection_name} ({doc_count})")
+                collection_item.setEditable(False)
+                item_id = f"collection_{collection_name}_{i}"
+                self._collections_refs[item_id] = collection_item
+                self._model_items.append(collection_item)
+
+                if db_item is not None and not sip.isdeleted(db_item):
+                    db_item.appendRow(collection_item)
+                    collection_items_batch.append(collection_item)
+
+                    if len(collection_items_batch) >= batch_size:
+                        QApplication.processEvents()
+                        collection_items_batch = []
+                else:
+                    print(f"Error: db_item no es válido al procesar la colección {collection_name}")
+
                 if progress:
-                    
-                    # Almacenar referencia utilizando un identificador único
-                    collection_item = QStandardItem(f"{collection_name} ({self.db[collection_name].count_documents({})})")
-                    item_id = f"collection_{collection_name}_{i}"
-                    self._collections_refs[item_id] = collection_item
-                    self._model_items.append(collection_item)
-                    
-                    # Verificar si db_item sigue siendo válido antes de añadir el item
-                    if db_item is not None and not sip.isdeleted(db_item):
-                        db_item.appendRow(collection_item)
-                        collection_items_batch.append(collection_item)
-                        
-                        # Procesar eventos cada cierto número de elementos para mantener la UI responsiva
-                        if len(collection_items_batch) >= batch_size:
-                            QApplication.processEvents()
-                            collection_items_batch = []  # Reiniciar el lote
-                    else:
-                        print(f"Error: db_item no es válido al procesar la colección {collection_name}")
-                        # Intentar recuperar el ítem de la base de datos
-                        db_item = self._db_items.get(self.database_name)
-                        if db_item is not None and not sip.isdeleted(db_item):
-                            db_item.appendRow(collection_item)
-                        else:
-                            # Si no se puede recuperar, reiniciar el proceso
-                            print("Error crítico: db_item se ha eliminado, reiniciando visualización")
-                            # Limpiamos todo y reiniciamos con protección contra recursión
-                            if not hasattr(self, '_show_collections_recursion_guard'):
-                                try:
-                                    self._show_collections_recursion_guard = True
-                                    # Use QTimer to restart after pending events are processed
-                                    QTimer.singleShot(100, self.reset_and_show_collections)
-                                except Exception as e:
-                                    print(f"Error in reset_and_show_collections: {e}")
-                                    pass
+                    progress.setValue(i + 1)
 
-                # Close progress if shown
-                if progress:
-                    progress.setValue(total_collections)
-                
+            if progress:
+                progress.setValue(total_collections)
 
-                # Expand first level to show collections
-                if self.is_tree_view_valid() and self.collections_model.rowCount() > 0:
-                    self.collections_tree.expandToDepth(0)
+            if self.is_tree_view_valid() and self.collections_model.rowCount() > 0:
+                self.collections_tree.expandToDepth(0)
 
-        # Manejar errores de visualización
         except Exception as e:
             print(f"Error showing collections: {e}")
-            print("Traceback:")
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error al obtener las colecciones: {str(e)}")
 
@@ -703,7 +579,132 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
                     QTimer.singleShot(100, self.reset_and_show_collections)
                 except Exception as restart_error:
                     print(f"Error en reinicio: {restart_error}")
-                    pass
+
+    def create_flat_view(self, model, collections):
+        """Vista plana: todas las colecciones directamente bajo la raíz, sin agrupar."""
+        root_item = model.invisibleRootItem()
+        for collection_name in sorted(collections):
+            try:
+                doc_count = self.db[collection_name].count_documents({})
+            except Exception:
+                doc_count = 0
+            item = QStandardItem(f"{collection_name} ({doc_count})")
+            item.setEditable(False)
+            self._model_items.append(item)
+            root_item.appendRow(item)
+
+        if self.is_tree_view_valid():
+            self.collections_tree.expandToDepth(0)
+
+    def create_type_grouped_view(self, model, collections):
+        """Vista agrupada por tipo de contenido detectado en cada colección."""
+        root_item = model.invisibleRootItem()
+        groups = {}
+        for collection_name in collections:
+            content_type = self.detect_collection_content_type(collection_name)
+            groups.setdefault(content_type, []).append(collection_name)
+
+        for content_type in sorted(groups.keys()):
+            type_item = QStandardItem(f"{content_type} ({len(groups[content_type])})")
+            type_item.setEditable(False)
+            type_item.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+            self._model_items.append(type_item)
+            root_item.appendRow(type_item)
+
+            for collection_name in sorted(groups[content_type]):
+                try:
+                    doc_count = self.db[collection_name].count_documents({})
+                except Exception:
+                    doc_count = 0
+                item = QStandardItem(f"{collection_name} ({doc_count})")
+                item.setEditable(False)
+                self._model_items.append(item)
+                type_item.appendRow(item)
+
+        if self.is_tree_view_valid():
+            self.collections_tree.expandToDepth(0)
+
+    def create_user_grouped_view(self, model, collections):
+        """Vista agrupada por propietario de cada colección."""
+        root_item = model.invisibleRootItem()
+        groups = {}
+        for collection_name in collections:
+            owner_info = self.find_collection_owner(collection_name)
+            owner_name = owner_info.get("nombre", "Desconocido") if owner_info else "Desconocido"
+            groups.setdefault(owner_name, []).append(collection_name)
+
+        for owner_name in sorted(groups.keys()):
+            owner_item = QStandardItem(f"{owner_name} ({len(groups[owner_name])})")
+            owner_item.setEditable(False)
+            owner_item.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon))
+            self._model_items.append(owner_item)
+            root_item.appendRow(owner_item)
+
+            for collection_name in sorted(groups[owner_name]):
+                try:
+                    doc_count = self.db[collection_name].count_documents({})
+                except Exception:
+                    doc_count = 0
+                item = QStandardItem(f"{collection_name} ({doc_count})")
+                item.setEditable(False)
+                self._model_items.append(item)
+                owner_item.appendRow(item)
+
+        if self.is_tree_view_valid():
+            self.collections_tree.expandToDepth(0)
+
+    def show_collection_owners(self):
+        """Mostrar un diálogo con los propietarios de todas las colecciones de la base de datos actual."""
+        if self.db is None:
+            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
+            return
+
+        try:
+            owners = self.get_all_collection_owners()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al obtener propietarios: {str(e)}")
+            return
+
+        if not owners:
+            QMessageBox.information(self, "Información", "No hay colecciones o no se pudo obtener información de propietarios")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Propietarios de Colecciones - {self.database_name}")
+        dialog.resize(700, 450)
+
+        layout = QVBoxLayout(dialog)
+
+        info_label = QLabel(f"Se encontraron {len(owners)} colecciones en '{self.database_name}'")
+        info_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-bottom: 8px;")
+        layout.addWidget(info_label)
+
+        table = QTableWidget()
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(["Colección", "Propietario", "Email", "Departamento", "Cargo"])
+        table.setRowCount(len(owners))
+        table.setAlternatingRowColors(True)
+        table.setSortingEnabled(True)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        for row, (collection_name, owner_info) in enumerate(sorted(owners.items())):
+            table.setItem(row, 0, QTableWidgetItem(collection_name))
+            table.setItem(row, 1, QTableWidgetItem(str(owner_info.get("nombre", "Desconocido"))))
+            table.setItem(row, 2, QTableWidgetItem(str(owner_info.get("email", "N/A"))))
+            table.setItem(row, 3, QTableWidgetItem(str(owner_info.get("departamento", "N/A"))))
+            table.setItem(row, 4, QTableWidgetItem(str(owner_info.get("cargo", "N/A"))))
+
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        close_button = QPushButton("Cerrar")
+        close_button.clicked.connect(dialog.accept)
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
 
     # Método auxiliar para reiniciar y mostrar colecciones después de un error
     def reset_and_show_collections(self):
@@ -730,29 +731,6 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
             print(f"Error reiniciando vista de colecciones: {e}")
             QMessageBox.critical(self, "Error", f"Error al reiniciar la vista de colecciones: {str(e)}")
 
-    # Configurar el árbol de tablas
-    self.tables_tree = QTreeWidget()
-    self.tables_tree.setHeaderLabels(["Tabla", "Tipo", "Campos"])
-    self.tables_tree.setAlternatingRowColors(True)
-    tables_layout.addWidget(self.tables_tree)
-
-    # Agregar la pestaña de tablas
-    self.collection_view_tabs.addTab(tables_tab, "Relaciones de Tablas")
-
-    # Agregar la pestaña de metadatos
-    self.collection_view_tabs.addTab(metadata_tab, "Metadatos")
-
-    # Configurar el layout del widget de colecciones
-    collections_layout = QVBoxLayout(collections_widget)
-    collections_layout.addWidget(splitter)
-
-    # Establecer proporción del splitter (30% izquierda, 70% derecha)
-    splitter.setSizes([300, 700])
-
-    # Agregar la pestaña al widget de pestañas
-    self.tab_widget.addTab(collections_widget, "Colecciones")
-    self._widgets_initialized = True
-        
     def setup_query_tab(self):
         """Configurar la pestaña de consultas para ejecutar queries MongoDB"""
         try:
@@ -1236,31 +1214,6 @@ Ejemplos de consultas:
             print(f"Error in limpiar_recursos: {e}")
             traceback.print_exc()
             
-    def closeEvent(self, event):
-        """Handle window close event"""
-        try:
-            # Cleanup operations
-            print("\n--- Closing main window ---")
-            # Explicitly disconnect signals to prevent crashes
-            self.connection_status_changed.disconnect()
-            
-            # Clean up resources
-            # Clear models to prevent memory leaks
-            if hasattr(self, 'collections_model'):
-                self.collections_model = None
-                try:
-                    # Don't set parent to None as it can cause issues
-                    if hasattr(self, 'collections_tree') and self.collections_tree:
-                        self.collections_tree.deleteLater()
-                except:
-                    pass  # Silently handle deletion errors
-                    
-            event.accept()
-        except Exception as e:
-            print(f"Error during close event: {e}")
-            traceback.print_exc()
-            event.accept()  # Accept the event even if there's an error
-            
     def update_database_stats(self):
         """Update the database statistics display"""
         try:
@@ -1283,6 +1236,7 @@ Ejemplos de consultas:
             <p><b>Indexes:</b> {stats.get('indexes', 0)}</p>
             <p><b>Index Size:</b> {index_size_mb:.2f} MB</p>
             """
+            self.stats_content.setHtml(formatted_stats)
             return True
         except Exception as e:
             self.show_status_message(f"Error updating statistics: {e}", error=True)
@@ -1698,32 +1652,7 @@ Ejemplos de consultas:
             print(f"Error refreshing UI: {e}")
             traceback.print_exc()
             return False
-            
-    # View mode selection
-    if view_mode == 1:  # Vista agrupada por tipo
-        self.create_type_grouped_view(model, collections)
-    else:  # Vista plana
-        # Clear and recreate with flat view
-        root_item.removeRow(0)  # Remove db_item
-        self.create_flat_view(model, collections)
-        
-        
-    def closeEvent(self, event):
-        """Handle window close event"""
-        print("\n--- Cerrando ventana principal ---")
-        try:
-            # Explicitly disconnect signals to prevent crashes
-            # Disconnect signals to prevent callbacks
-            self.connection_status_changed.disconnect()
-            
-            # Clean up resources
-            self.limpiar_recursos()
-            event.accept()
-        except Exception as e:
-            print(f"Error during close event: {e}")
-            event.accept()
-                
-    
+
     def view_collection_data(self, index):
         """Handle double-click event on collections tree to view collection data"""
         try:
@@ -1771,6 +1700,12 @@ Ejemplos de consultas:
     def show_collection_data(self, collection_name, limit=100, with_metadata=False):
         """Show data from the specified collection in the data table"""
         try:
+                if self.db is None:
+                    return
+
+                collection = self.db[collection_name]
+                documents = collection.find().limit(limit)
+
                 # Verificar que self.data_table no es None antes de usarlo
                 if hasattr(self, 'data_table') and self.data_table is not None:
                     # Clear the table
@@ -1888,7 +1823,7 @@ Ejemplos de consultas:
                             self.meta_created_date.setText(created_date.strftime("%d/%m/%Y %H:%M"))
                         else:
                             self.meta_created_date.setText("N/A (ID no es ObjectId)")
-                    except Exception as id_error:
+                    except Exception:
                         self.meta_created_date.setText("N/A")
                 else:
                     self.meta_created_date.setText("N/A (colección vacía)")
@@ -1903,7 +1838,7 @@ Ejemplos de consultas:
                             self.meta_modified_date.setText(modified_date.strftime("%d/%m/%Y %H:%M"))
                         else:
                             self.meta_modified_date.setText("N/A (ID no es ObjectId)")
-                    except Exception as id_error:
+                    except Exception:
                         self.meta_modified_date.setText("N/A")
                 else:
                     self.meta_modified_date.setText("N/A (colección vacía)")
@@ -1960,7 +1895,6 @@ Ejemplos de consultas:
             field_types = {}
             data_rows_count = 0
             has_table_structure = True
-            has_excel_structure = False
             has_geospatial_data = False
             has_complex_objects = False
             
@@ -2158,10 +2092,7 @@ Ejemplos de consultas:
                     text_preview.setText(message)
                 
                 return
-            
-            # Detectar tipo de contenido
-            content_type = self.detect_collection_content_type(collection_name)
-            
+
             # Actualizar vista previa según el tipo seleccionado
             if preview_type == "Tabla":
                 table_preview = self.preview_stack.widget(0)
@@ -3361,21 +3292,44 @@ Ejemplos de consultas:
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al actualizar la contraseña: {str(e)}")
             self.show_status_message(f"Error: {str(e)}", error=True)
-            
-            if dialog.search_type.currentText() == "Por Nombre":
+
+    def search_user_for_password(self, dialog):
+        """Buscar un usuario para asociarlo al diálogo de cambio de contraseña"""
+        try:
+            search_text = dialog.search_text.text().strip()
+            if not search_text:
+                QMessageBox.warning(self, "Advertencia", "Introduzca un texto de búsqueda")
+                return
+
+            collection_name = 'users_unified'
+            found_users = []
+
+            if dialog.search_type.currentText() == "Por ID":
+                from bson.objectid import ObjectId
+                try:
+                    query = {'_id': ObjectId(search_text)}
+                except Exception:
+                    QMessageBox.warning(self, "Advertencia", "ID de usuario no válido")
+                    return
+            elif dialog.search_type.currentText() == "Por Nombre":
                 query = {'$or': [
                     {'nombre': {'$regex': search_text, '$options': 'i'}},
                     {'name': {'$regex': search_text, '$options': 'i'}}
                 ]}
             elif dialog.search_type.currentText() == "Por Email":
                 query = {'email': {'$regex': search_text, '$options': 'i'}}
-                
+
             # Buscar usuarios que coincidan con la consulta
             users = list(self.db[collection_name].find(query))
             for user in users:
                 # Store source collection consistently
                 user['_source_collection'] = collection_name
                 found_users.append(user)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al buscar el usuario: {str(e)}")
+            self.show_status_message(f"Error: {str(e)}", error=True)
+            return
+
         if not found_users:
             QMessageBox.information(dialog, "Información", "No se encontraron usuarios que coincidan con los criterios")
             return
@@ -3960,7 +3914,6 @@ Total de bases de datos: {len(databases)}""")
                             break
                                 
                         try:
-                            collection = db[collection_name]
                             owner_info = {
                                 "database": db_name,
                                 "collection": collection_name,
@@ -4278,56 +4231,31 @@ Total de bases de datos: {len(databases)}""")
             
             # Intentar buscar información de acceso en registros de auditoría
             try:
+                access_logs = []
                 if db_name in self.client.list_database_names():
                     db = self.client[db_name]
-                    
+
                     if 'audit_log' in db.list_collection_names():
-                        # Eliminar el layout viejo por completo
-                        QWidget().setLayout(old_layout)
-                    
-                    # Create a new layout for data widget
-                    new_data_layout = QVBoxLayout()
-                    data_widget.setLayout(new_data_layout)
-                    
-                    # Crear un widget con pestañas para los datos y metadatos
-                    self.collections_tab_widget = QTabWidget()
-                    
-                    # Handle access logs if they exist
-                    try:
-                        # Check if access logs are available
-                        if access_logs:
-                            access_table = QTableWidget()
-                            access_table.setColumnCount(3)
-                            access_table.setHorizontalHeaderLabels(["Usuario", "Acción", "Fecha"])
-                            access_table.setRowCount(len(access_logs))
-                            
-                            # Populate the access table with log entries
-                            for i, log in enumerate(access_logs):
-                                access_table.setItem(i, 0, QTableWidgetItem(str(log.get('user', 'N/A'))))
-                                access_table.setItem(i, 1, QTableWidgetItem(str(log.get('action', 'N/A'))))
-                                access_table.setItem(i, 2, QTableWidgetItem(str(log.get('timestamp', 'N/A'))))
-                            
-                            # Add the access table to the layout
-                            access_layout = QVBoxLayout()
-                            access_layout.addWidget(access_table)
-                            access_widget = QWidget()
-                            access_widget.setLayout(access_layout)
-                            self.collections_tab_widget.addTab(access_widget, "Auditoría")
-                        else:
-                            # No access logs available
-                            access_layout = QVBoxLayout()
-                            access_layout.addWidget(QLabel("No hay registros de auditoría disponibles para esta base de datos"))
-                            access_widget = QWidget()
-                            access_widget.setLayout(access_layout)
-                            self.collections_tab_widget.addTab(access_widget, "Auditoría")
-                    except Exception as access_error:
-                        print(f"Error al obtener información de acceso: {access_error}")
-                        access_layout = QVBoxLayout()
-                        access_layout.addWidget(QLabel("Error al recuperar información de accesos"))
-                        access_widget = QWidget()
-                        access_widget.setLayout(access_layout)
-                        self.collections_tab_widget.addTab(access_widget, "Auditoría")
-                
+                        access_logs = list(db['audit_log'].find(
+                            {"collection": collection_name}
+                        ).sort("timestamp", -1).limit(20))
+
+                if access_logs:
+                    access_table = QTableWidget()
+                    access_table.setColumnCount(3)
+                    access_table.setHorizontalHeaderLabels(["Usuario", "Acción", "Fecha"])
+                    access_table.setRowCount(len(access_logs))
+
+                    # Populate the access table with log entries
+                    for i, log in enumerate(access_logs):
+                        access_table.setItem(i, 0, QTableWidgetItem(str(log.get('user', log.get('usuario', 'N/A')))))
+                        access_table.setItem(i, 1, QTableWidgetItem(str(log.get('action', log.get('accion', 'N/A')))))
+                        access_table.setItem(i, 2, QTableWidgetItem(str(log.get('timestamp', log.get('fecha', 'N/A')))))
+
+                    access_layout.addWidget(access_table)
+                else:
+                    access_layout.addWidget(QLabel("No hay registros de auditoría disponibles para esta base de datos"))
+
                 # Add the main access group to layout
                 try:
                     layout.addWidget(access_group)
@@ -4441,74 +4369,7 @@ Total de bases de datos: {len(databases)}""")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al editar información del propietario: {str(e)}")
             self.show_status_message(f"Error: {str(e)}", error=True)
-        # Añadir botón para ver propietarios de colecciones
-        owner_button = QPushButton("Propietarios")
-        owner_button.clicked.connect(self.show_collection_owners)
-        owner_button.setToolTip("Ver propietarios de las colecciones")
-        collections_button_layout.addWidget(owner_button)
-        
-        tree_layout.addWidget(collections_buttons)
-        
-        left_layout.addWidget(self.tree_widget)
-        
-        # Panel derecho: visualización de datos
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        
-        # Panel de información general
-        info_panel = QWidget()
-        info_layout = QVBoxLayout(info_panel)
-        
-        self.collection_info_label = QLabel("Seleccione una colección para ver sus detalles")
-        self.collection_info_label.setWordWrap(True)
-        info_layout.addWidget(self.collection_info_label)
-        
-        info_panel.setLayout(info_layout)
-        right_layout.addWidget(info_panel, 1)  # 20% del espacio vertical
-        
-        # Panel de pestañas para diferentes vistas
-        self.collection_view_tabs = QTabWidget()
-        
-        # Pestaña de datos
-        data_tab = QWidget()
-        data_tab_layout = QVBoxLayout(data_tab)
-        
-        data_label = QLabel("Contenido de la Colección:")
-        data_tab_layout.addWidget(data_label)
-        
-        # Create data table if it doesn't exist yet
-        if not hasattr(self, 'data_table') or self.data_table is None or sip.isdeleted(self.data_table):
-            self.data_table = QTableWidget()
-            self.data_table.setAlternatingRowColors(True)
-        data_tab_layout.addWidget(self.data_table)
-        
-        self.collection_view_tabs.addTab(data_tab, "Datos")
-        
-        # Create tables tab
-        tables_tab = QWidget()
-        tables_layout = QVBoxLayout(tables_tab)
-        
-        tables_label = QLabel("Mapeo de Tablas para esta Colección:")
-        tables_layout.addWidget(tables_label)
-        
-        self.tables_tree = QTreeWidget()
-        self.tables_tree.setHeaderLabels(["Tabla", "Tipo", "Campos"])
-        self.tables_tree.setAlternatingRowColors(True)
-        tables_layout.addWidget(self.tables_tree)
-        
-        self.collection_view_tabs.addTab(tables_tab, "Relaciones de Tablas")
-        
-        # Pestaña de metadatos
-        metadata_tab = QWidget()
-        metadata_layout = QVBoxLayout(metadata_tab)
-        
-        metadata_label = QLabel("Metadatos de la Colección:")
-        metadata_layout.addWidget(metadata_label)
-        
-        self.metadata_table = QTableWidget()
-        self.metadata_table.setColumnCount(2)
-        self.metadata_table.setHorizontalHeaderLabels(["Propiedad", "Valor"])
-        self.metadata_table.setAlternatingRowColors(True)
+
     def show_database_details(self, table):
         """Mostrar estadísticas y detalles de la base de datos seleccionada"""
         try:
@@ -4976,7 +4837,7 @@ Total de bases de datos: {len(databases)}""")
                         index_sizes = stats.get('indexSizes', {})
                         size = index_sizes.get(index.get('name', ''), 0) / 1024  # KB
                         index_table.setItem(i, 3, QTableWidgetItem(f"{size:.2f} KB"))
-                    except Exception as e:
+                    except Exception:
                         index_table.setItem(i, 3, QTableWidgetItem("No disponible"))
                     
                     # Es único
@@ -4992,245 +4853,175 @@ Total de bases de datos: {len(databases)}""")
             # Pestaña 2: Crear Índice
             create_tab = QWidget()
             create_layout = QVBoxLayout(create_tab)
-            
-            # Añadir pestañas al TabWidget
-            # Añadir pestañas al TabWidget
-            tab_widget.addTab(existing_tab, "Índices Existentes")
-            tab_widget.addTab(create_tab, "Crear Índice")
 
-            # Añadir datos de la colección al formulario
-            form_layout = QFormLayout(create_tab)
+            form_layout = QFormLayout()
             collection_name_label = QLabel(collection_name)
             collection_name_label.setStyleSheet("font-weight: bold;")
             form_layout.addRow("Colección:", collection_name_label)
-            
-            # Es único
-            is_unique = "Sí" if index.get('unique', False) else "No"
-            index_table.setItem(i, 4, QTableWidgetItem(is_unique))
-            
-            # Resize columns to fit content
-            index_table.resizeColumnsToContents()
-            
-            # Añadir estadísticas de uso para índices existentes
-            try:
-                # Obtener información de índices
-                usage = "Bajo"
-                ops = "~10/día"
-            except Exception as e:
-                print(f"Error al obtener estadísticas de uso: {e}")
-            
-            # Añadir la pestaña de reindexación
-            tab_widget.addTab(reindex_tab, "Rendimiento")
 
-            # Create tab setup
-            # Form for index creation
-            form_layout = QFormLayout()
-            
-            # Add field selection
-            form_layout.addRow("Seleccionar campos:", QLabel("Seleccione los campos para indexar"))
-            
-            # Index type selection
+            # Selección de campos a indexar, a partir de un documento de muestra
+            sample_doc = collection.find_one() or {}
+            field_names = sorted(k for k in sample_doc.keys() if k != '_id')
+
+            fields_list = QListWidget()
+            fields_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+            for field_name in field_names:
+                fields_list.addItem(QListWidgetItem(field_name))
+            form_layout.addRow("Campos a indexar:", fields_list)
+
             index_type_combo = QComboBox()
             index_type_combo.addItems(["Estándar", "Único", "Texto", "TTL"])
             form_layout.addRow("Tipo de índice:", index_type_combo)
-            
-            # Options widget for different index types
+
+            # Widget de opciones según el tipo de índice
             options_widget = QStackedWidget()
-            
-            # Conectar cambios de tipo de índice con cambios en el widget de opciones
-            index_type_combo.currentIndexChanged.connect(lambda idx: options_widget.setCurrentIndex(idx))
-            
-            # Añadir el layout de formulario al layout de creación
-            create_layout.addLayout(form_layout)
-            
-            button_layout = QHBoxLayout()
-            # Options widget for different index types
-            options_widget = QStackedWidget()
-            
-            # Conectar cambios de tipo de índice con cambios en el widget de opciones
-            index_type_combo.currentIndexChanged.connect(lambda idx: options_widget.setCurrentIndex(idx))
-            
-            # Añadir el layout de formulario al layout de creación
-            create_layout.addLayout(form_layout)
-            
-            # Clear the index table
-            index_table.setRowCount(0)
-            
-            # Obtener índices actualizados
-            collection = self.db[collection_name]
-            indexes = list(collection.list_indexes())
-            
-            # Actualizar tabla
-            index_table.setRowCount(len(indexes))
-            
-            for i, index in enumerate(indexes):
-                # Nombre del índice
-                index_table.setItem(i, 0, QTableWidgetItem(index.get('name', 'N/A')))
-                
-                # Campos del índice
-                key_fields = ', '.join([f"{k}:{v}" for k, v in index.get('key', {}).items()])
-                index_table.setItem(i, 1, QTableWidgetItem(key_fields))
-                    
-            # Update complete
-        except Exception as e:
-            print(f"Error al actualizar índices: {e}")
-            QMessageBox.warning(self, "Error", f"Error al actualizar índices: {str(e)}")
-            
-            # Widget para índice TTL
+
+            standard_options = QWidget()
+            options_widget.addWidget(standard_options)  # Estándar: sin opciones
+
+            unique_options = QWidget()
+            options_widget.addWidget(unique_options)  # Único: sin opciones
+
+            text_options = QWidget()
+            options_widget.addWidget(text_options)  # Texto: sin opciones adicionales
+
             ttl_widget = QWidget()
             ttl_layout = QFormLayout(ttl_widget)
-            
             ttl_seconds = QLineEdit()
             ttl_seconds.setText("86400")  # 1 día por defecto
             ttl_layout.addRow("Segundos para expiración:", ttl_seconds)
-            
             ttl_info = QLabel("Los documentos serán eliminados automáticamente después de este tiempo")
             ttl_info.setWordWrap(True)
-            ttl_layout.addWidget(ttl_info)
-            
-            options_widget.addWidget(ttl_widget)
-            
-            # Conectar cambios de tipo de índice con cambios en el widget de opciones
-            index_type.currentIndexChanged.connect(options_widget.setCurrentIndex)
-            
+            ttl_layout.addRow(ttl_info)
+            options_widget.addWidget(ttl_widget)  # TTL
+
+            index_type_combo.currentIndexChanged.connect(options_widget.setCurrentIndex)
             form_layout.addRow("Opciones:", options_widget)
-            
-            # Botones para crear índice
+
             create_layout.addLayout(form_layout)
-            
-            options_widget.addWidget(ttl_widget)
-            
-            # Conectar cambios de tipo de índice con cambios en el widget de opciones
-            index_type.currentIndexChanged.connect(options_widget.setCurrentIndex)
-            
-            form_layout.addRow("Opciones:", options_widget)
-            
-            # Botones para crear índice
-            create_layout.addLayout(form_layout)
-            # Función para eliminar un índice seleccionado
-            def delete_selected_index():
-                selected_row = index_table.currentRow()
-                
-                # Función para actualizar la tabla de índices
-                def refresh_indexes():
+
+            create_buttons_layout = QHBoxLayout()
+            create_button = QPushButton("Crear Índice")
+            create_button.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
+            create_buttons_layout.addWidget(create_button)
+            cancel_button = QPushButton("Cerrar")
+            create_buttons_layout.addWidget(cancel_button)
+            create_layout.addLayout(create_buttons_layout)
+
+            def refresh_indexes():
+                try:
+                    index_table.setRowCount(0)
+                    updated_indexes = list(collection.list_indexes())
+                    index_table.setRowCount(len(updated_indexes))
+
+                    for i, index in enumerate(updated_indexes):
+                        index_table.setItem(i, 0, QTableWidgetItem(index.get('name', 'N/A')))
+
+                        key_fields = ', '.join([f"{k}:{v}" for k, v in index.get('key', {}).items()])
+                        index_table.setItem(i, 1, QTableWidgetItem(key_fields))
+
+                        index_type = "Regular"
+                        if 'text' in index.get('key', {}):
+                            index_type = "Texto"
+                        elif '2dsphere' in index.get('key', {}):
+                            index_type = "Geoespacial"
+                        elif 'expireAfterSeconds' in index:
+                            index_type = "TTL"
+                        index_table.setItem(i, 2, QTableWidgetItem(index_type))
+
+                        try:
+                            stats = self.db.command({"collStats": collection_name})
+                            index_sizes = stats.get('indexSizes', {})
+                            size = index_sizes.get(index.get('name', ''), 0) / 1024
+                            index_table.setItem(i, 3, QTableWidgetItem(f"{size:.2f} KB"))
+                        except Exception:
+                            index_table.setItem(i, 3, QTableWidgetItem("No disponible"))
+
+                        is_unique = "Sí" if index.get('unique', False) else "No"
+                        index_table.setItem(i, 4, QTableWidgetItem(is_unique))
+
+                    index_table.resizeColumnsToContents()
+                except Exception as e:
+                    print(f"Error al actualizar índices: {e}")
+                    QMessageBox.warning(self, "Error", f"Error al actualizar índices: {str(e)}")
+
+            def create_index_action():
+                selected_fields = [item.text() for item in fields_list.selectedItems()]
+                if not selected_fields:
+                    QMessageBox.warning(self, "Advertencia", "Seleccione al menos un campo para el índice")
+                    return
+
+                index_type_text = index_type_combo.currentText()
+                key_dict = {}
+                index_options = {}
+
+                if index_type_text == "Estándar":
+                    for field in selected_fields:
+                        key_dict[field] = 1
+                elif index_type_text == "Único":
+                    for field in selected_fields:
+                        key_dict[field] = 1
+                    index_options["unique"] = True
+                elif index_type_text == "Texto":
+                    for field in selected_fields:
+                        key_dict[field] = "text"
+                elif index_type_text == "TTL":
+                    if len(selected_fields) != 1:
+                        QMessageBox.warning(self, "Advertencia", "Los índices TTL solo pueden tener un campo (de tipo fecha)")
+                        return
+                    key_dict[selected_fields[0]] = 1
                     try:
-                        # Limpiar la tabla
-                        index_table.setRowCount(0)
-                        
-                        # Obtener índices actualizados
-                        collection = self.db[collection_name]
-                        indexes = list(collection.list_indexes())
-                        
-                        # Actualizar tabla
-                        index_table.setRowCount(len(indexes))
-                        
-                        for i, index in enumerate(indexes):
-                            # Nombre del índice
-                            index_table.setItem(i, 0, QTableWidgetItem(index.get('name', 'N/A')))
-                            
-                            # Campos del índice
-                            key_fields = ', '.join([f"{k}:{v}" for k, v in index.get('key', {}).items()])
-                            index_table.setItem(i, 1, QTableWidgetItem(key_fields))
-                            
-                            # Tipo de índice
-                    except Exception as e:
-                        print(f"Error al actualizar índices: {e}")
-                        QMessageBox.warning(self, "Error", f"Error al actualizar índices: {str(e)}")
-            
-            # Crear documento clave
-            key_dict = {}
-            
-            if index_type_text == "Estándar":
-                # Índice estándar - asignar 1 a cada campo
-                for field in selected_fields:
-                    key_dict[field] = 1
-                    
-            elif index_type_text == "Único":
-                # Índice único
-                for field in selected_fields:
-                    key_dict[field] = 1
-                index_options["unique"] = True
-                
-            elif index_type_text == "Texto":
-                # Índice de texto
-                for field in selected_fields:
-                    key_dict[field] = "text"
-                    
-                # Si se especificaron pesos
-                if text_weights_check.isChecked():
-                    weights = {}
-                    for i, field in enumerate(selected_fields):
-                        # Obtener el peso del campo desde el formulario
-                        weight_input = weights_widget.findChild(QLineEdit, f"weight_{field}")
-                        if weight_input:
-                            try:
-                                weight = int(weight_input.text())
-                                weights[field] = weight
-                            except ValueError:
-                                weights[field] = 1
-                        else:
-                            weights[field] = 1
-                    
-                    index_options["weights"] = weights
-            
-            elif index_type_text == "TTL":
-                # Índice TTL
-                if len(selected_fields) != 1:
-                    QMessageBox.warning(self, "Advertencia", "Los índices TTL solo pueden tener un campo (de tipo fecha)")
+                        index_options["expireAfterSeconds"] = int(ttl_seconds.text())
+                    except ValueError:
+                        QMessageBox.warning(self, "Advertencia", "El tiempo de expiración debe ser un número entero de segundos")
+                        return
+
+                index_name = "_".join(selected_fields)
+                if index_type_text != "Estándar":
+                    index_name += f"_{index_type_text.lower()}"
+                index_options["name"] = index_name
+
+                confirm = QMessageBox.question(
+                    self,
+                    "Confirmar Creación",
+                    f"¿Está seguro de que desea crear el índice '{index_name}'?\n\n"
+                    f"Campos: {', '.join(selected_fields)}\n"
+                    f"Tipo: {index_type_text}",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if confirm != QMessageBox.StandardButton.Yes:
                     return
-            
-                field = selected_fields[0]
-                key_dict[field] = 1
-                
+
                 try:
-                    seconds = int(ttl_seconds.text())
-                    index_options["expireAfterSeconds"] = seconds
-                except ValueError:
-                    QMessageBox.warning(self, "Advertencia", "El tiempo de expiración debe ser un número entero de segundos")
-                    return
-            
-            # Crear nombre para el índice
-            index_name = "_".join(selected_fields)
-            if index_type_text != "Estándar":
-                index_name += f"_{index_type_text.lower()}"
-                
-            index_options["name"] = index_name
-            
-            # Confirmar creación de índice
-            confirm = QMessageBox.question(
-                self,
-                "Confirmar Creación",
-                f"¿Está seguro de que desea crear el índice '{index_name}'?\n\n"
-                f"Campos: {', '.join(selected_fields)}\n"
-                f"Tipo: {index_type_text}\n\n"
-            )
-            
-            # Widget para índice TTL
-            ttl_widget = QWidget()
-            ttl_layout = QFormLayout(ttl_widget)
-            
-            # Agregar widget TTL a opciones
-            options_widget.addWidget(ttl_widget)
-            
-            # Crear el índice si el usuario confirmó
-            if confirm == QMessageBox.Yes:
-                try:
-                    collection = self.db[collection_name]
                     collection.create_index(list(key_dict.items()), **index_options)
-                    
-                    # Actualizar tabla de índices existentes
                     refresh_indexes()
-                    
-                    # Cambiar a la pestaña de índices existentes
                     tab_widget.setCurrentIndex(0)
-                    
                     QMessageBox.information(self, "Éxito", f"Índice '{index_name}' creado correctamente")
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Error al crear índice: {str(e)}")
-            
+
+            create_button.clicked.connect(create_index_action)
+            cancel_button.clicked.connect(lambda: index_dialog.reject())
+
+            # Pestaña 3: Rendimiento (reindexación)
+            reindex_tab = QWidget()
+            reindex_layout = QVBoxLayout(reindex_tab)
+
+            reindex_info = QLabel(
+                "La reindexación reconstruye todos los índices de la colección. "
+                "Este proceso puede tardar y bloquea las operaciones de escritura."
+            )
+            reindex_info.setWordWrap(True)
+            reindex_layout.addWidget(reindex_info)
+
+            reindex_button = QPushButton("Reindexar Colección")
+            reindex_button.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold;")
+            reindex_layout.addWidget(reindex_button)
+            reindex_layout.addStretch()
+
             def reindex_collection_action():
                 try:
-                    # Confirmar reindexación
                     confirm = QMessageBox.question(
                         self,
                         "Confirmar Reindexación",
@@ -5239,49 +5030,42 @@ Total de bases de datos: {len(databases)}""")
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                         QMessageBox.StandardButton.No
                     )
-                    
+
                     if confirm == QMessageBox.StandardButton.Yes:
-                        # Crear diálogo de progreso
                         progress = QProgressDialog("Reindexando colección...", "Cancelar", 0, 100, self)
                         progress.setWindowModality(Qt.WindowModality.WindowModal)
                         progress.setValue(0)
                         progress.show()
-                        
-                        # Función para reindexar
+
                         def do_reindex():
                             try:
-                                # Ejecutar reindex
                                 result = self.db.command("reIndex", collection_name)
                                 return True, result
                             except Exception as e:
                                 return False, str(e)
-                        
-                        # En una aplicación real, esto debería ejecutarse en un hilo separado
-                        # Para simplificar, lo hacemos directamente
-                        progress.setValue(30)  # Actualizar progreso para indicar que ha comenzado
-                        
+
+                        progress.setValue(30)
                         success, result = do_reindex()
-                        
-                        progress.setValue(100)  # Completar barra de progreso
-                        
+                        progress.setValue(100)
+
                         if success:
                             QMessageBox.information(self, "Éxito", f"Colección '{collection_name}' reindexada correctamente")
-                            # Actualizar tabla de índices
                             refresh_indexes()
                         else:
                             QMessageBox.critical(self, "Error", f"Error durante la reindexación: {result}")
-                
+
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Error al reindexar colección: {str(e)}")
-            
-            # Conectar botones con sus acciones
-            create_button.clicked.connect(create_index_action)
-            cancel_button.clicked.connect(lambda: index_dialog.reject())
+
             reindex_button.clicked.connect(reindex_collection_action)
-            
-            # Mostrar el diálogo
+
+            tab_widget.addTab(existing_tab, "Índices Existentes")
+            tab_widget.addTab(create_tab, "Crear Índice")
+            tab_widget.addTab(reindex_tab, "Rendimiento")
+            dialog_layout.addWidget(tab_widget)
+
             index_dialog.exec()
-            
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al gestionar índices: {str(e)}")
             self.show_status_message(f"Error: {str(e)}", error=True)
@@ -5349,7 +5133,6 @@ Total de bases de datos: {len(databases)}""")
             # Resumen
             valid_count = sum(1 for _, valid in results if valid)
             summary = QLabel(f"Resumen: {valid_count}/{len(results)} colecciones son válidas")
-            summary = QLabel(f"Resumen: {valid_count}/{len(results)} colecciones son válidas")
             summary.setStyleSheet("font-weight: bold; margin-top: 10px;")
             layout.addWidget(summary)
             button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -5369,8 +5152,8 @@ Total de bases de datos: {len(databases)}""")
             dialog = QDialog(self)
             dialog.setWindowTitle("Tutorial - Gestor de Base de Datos MongoDB")
             dialog.resize(800, 600)
-            summary = QLabel(f"Resumen: {valid_count}/{len(results)} colecciones son válidas")
-            
+            layout = QVBoxLayout(dialog)
+
             # Título
             title = QLabel("Guía de Uso - Gestor de Base de Datos MongoDB")
             title.setStyleSheet("font-size: 18px; font-weight: bold; margin-bottom: 15px;")
@@ -5534,15 +5317,14 @@ Total de bases de datos: {len(databases)}""")
   <li><b>BSON</b> - Formato binario de MongoDB</li>
 </ul>
 """)
-            if hasattr(self, 'collections_tree') and self.collections_tree and not sip.isdeleted(self.collections_tree):
-                try:
-                    self.collections_tree.setParent(None)
-                    self.collections_tree.deleteLater()
-                except:
-                    pass  # Silently handle deletion errors
-            
-            tree_layout = self.tree_widget.layout()
-            
+            import_export_text.setWordWrap(True)
+            import_export_text.setTextFormat(Qt.TextFormat.RichText)
+            import_export_layout.addWidget(import_export_text)
+
+            # Pestaña de Usuarios
+            users_widget = QWidget()
+            users_layout = QVBoxLayout(users_widget)
+
             users_text = QLabel("""
 <h3>Gestión de Usuarios</h3>
 
@@ -5651,8 +5433,8 @@ Total de bases de datos: {len(databases)}""")
             
             # Mostrar el diálogo
             dialog.exec()
-            
-        except Exception as e:
+
+        except Exception:
             try:
                 # Don't set parent to None as it can cause issues
                 if hasattr(self, 'collections_tree') and self.collections_tree:
@@ -5745,1070 +5527,6 @@ Total de bases de datos: {len(databases)}""")
             traceback.print_exc()
             event.accept()  # Accept the event even if there's an error
             
-    def backup_database(self):
-        """Create a backup of the database"""
-        try:
-            # Implementation of backup functionality
-            pass
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al seleccionar ruta: {str(e)}")
-            return  # Return after handling the exception
-    def execute_backup(self, backup_path, is_full_backup, selected_collections, compress_backup, 
-                       compression_level, schedule_backup, schedule_frequency, schedule_time, 
-                       schedule_day, dialog):
-        """Ejecutar el respaldo con las opciones configuradas"""
-        try:
-            # Validar ruta de respaldo
-            if not backup_path:
-                QMessageBox.warning(dialog, "Advertencia", "Por favor, especifique una ruta de respaldo válida")
-                return
-                
-            # Validar colecciones seleccionadas si es respaldo selectivo
-            if not is_full_backup and not selected_collections:
-                QMessageBox.warning(dialog, "Advertencia", "Por favor, seleccione al menos una colección para el respaldo selectivo")
-                return
-                
-            # Crear directorio si no existe
-            if not os.path.exists(backup_path):
-                os.makedirs(backup_path)
-                
-            # Si se programó un respaldo
-            if schedule_backup:
-                self.schedule_backup_task(backup_path, is_full_backup, selected_collections, 
-                                        compress_backup, compression_level, 
-                                        schedule_frequency, schedule_time, schedule_day)
-                dialog.accept()
-                return
-                
-            # Iniciar respaldo
-            progress_dialog = QProgressDialog("Preparando respaldo...", "Cancelar", 0, 100, dialog)
-            progress_dialog.setWindowTitle("Respaldo en progreso")
-            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-            progress_dialog.setAutoClose(False)
-            progress_dialog.setAutoReset(False)
-            progress_dialog.setValue(0)
-            progress_dialog.show()
-            
-            # Crear función para realizar el respaldo en un hilo separado
-            def perform_backup():
-                try:
-                    # Actualizar progreso
-                    progress_dialog.setLabelText("Recopilando información de la base de datos...")
-                    progress_dialog.setValue(5)
-                    
-                    # Obtener colecciones según el tipo de respaldo
-                    collections_to_backup = []
-                    if is_full_backup:
-                        # Respaldar todas las colecciones excepto las del sistema
-                        collections_to_backup = [col for col in self.db.list_collection_names() 
-                                               if not col.startswith('system.')]
-                    else:
-                        # Respaldar solo las colecciones seleccionadas
-                        collections_to_backup = selected_collections
-                    
-                    progress_dialog.setLabelText(f"Respaldando {len(collections_to_backup)} colecciones...")
-                    progress_dialog.setValue(10)
-                    
-                    # Crear archivo de metadatos
-                    metadata = {
-                        'database': self.database_name,
-                        'timestamp': datetime.datetime.now().isoformat(),
-                        'collections': collections_to_backup,
-                        'compressed': compress_backup,
-                        'full_backup': is_full_backup,
-                        'version': '1.0'
-                    }
-                    
-                    # Guardar metadatos
-                    metadata_path = os.path.join(backup_path, 'metadata.json')
-                    with open(metadata_path, 'w', encoding='utf-8') as f:
-                        json.dump(metadata, f, indent=2, default=str)
-                        
-                    # Crear directorio para los datos
-                    data_dir = os.path.join(backup_path, 'collections')
-                    if not os.path.exists(data_dir):
-                        os.makedirs(data_dir)
-                    
-                    # Exportar cada colección
-                    total_collections = len(collections_to_backup)
-                    for i, collection_name in enumerate(collections_to_backup):
-                        if progress_dialog.wasCanceled():
-                            break
-                            
-                        progress_percent = 10 + int((i / total_collections) * 80)
-                        progress_dialog.setValue(progress_percent)
-                        progress_dialog.setLabelText(f"Respaldando colección: {collection_name}...")
-                        
-                        try:
-                            # Exportar datos de la colección
-                            collection = self.db[collection_name]
-                            documents = list(collection.find())
-                            
-                            # Guardar documentos
-                            collection_file = os.path.join(data_dir, f"{collection_name}.json")
-                            
-                            if compress_backup:
-                                with gzip.open(collection_file + '.gz', 'wt', encoding='utf-8', compresslevel=compression_level) as f:
-                                    json.dump(documents, f, default=str, indent=None)
-                            else:
-                                with open(collection_file, 'w', encoding='utf-8') as f:
-                                    json.dump(documents, f, default=str, indent=2)
-                                    
-                            # Exportar índices
-                            indexes = list(collection.list_indexes())
-                            indexes_file = os.path.join(data_dir, f"{collection_name}_indexes.json")
-                            
-                            if compress_backup:
-                                with gzip.open(indexes_file + '.gz', 'wt', encoding='utf-8', compresslevel=compression_level) as f:
-                                    json.dump(indexes, f, default=str, indent=None)
-                            else:
-                                with open(indexes_file, 'w', encoding='utf-8') as f:
-                                    json.dump(indexes, f, default=str, indent=2)
-                                    
-                        except Exception as col_error:
-                            progress_dialog.setLabelText(f"Error en colección {collection_name}: {str(col_error)}")
-                            print(f"Error al respaldar colección {collection_name}: {col_error}")
-                            continue
-                    
-                    # Registrar el respaldo en el log
-                    log_file = os.path.join(backup_path, 'backup_log.txt')
-                    with open(log_file, 'w', encoding='utf-8') as f:
-                        f.write(f"Respaldo de {self.database_name} completado en {datetime.datetime.now().isoformat()}\n")
-                        f.write(f"Tipo: {'Completo' if is_full_backup else 'Selectivo'}\n")
-                        f.write(f"Colecciones respaldadas: {len(collections_to_backup)}\n")
-                        for col in collections_to_backup:
-                            f.write(f"  - {col}\n")
-                    
-                    # Finalizar
-                    progress_dialog.setValue(100)
-                    progress_dialog.setLabelText("Respaldo completado con éxito")
-                    
-                    # Resultado exitoso
-                    return True, "Respaldo completado con éxito"
-                    
-                except Exception as e:
-                    progress_dialog.setLabelText(f"Error durante el respaldo: {str(e)}")
-                    print(f"Error durante el respaldo: {e}")
-                    return False, str(e)
-            
-            # Ejecutar el respaldo en un hilo separado
-            backup_thread = threading.Thread(target=perform_backup)
-            backup_thread.daemon = True
-            backup_thread.start()
-            
-            # Esperar a que termine el respaldo o se cancele
-            while backup_thread.is_alive() and not progress_dialog.wasCanceled():
-                QApplication.processEvents()
-            
-            if progress_dialog.wasCanceled():
-                QMessageBox.warning(dialog, "Advertencia", "Respaldo cancelado por el usuario")
-                dialog.accept()
-                return
-                
-            # Verificar si se completó correctamente
-            completed = not backup_thread.is_alive()
-            if completed:
-                QMessageBox.information(
-                    dialog,
-                    "Respaldo Completado",
-                    f"El respaldo se ha completado exitosamente en:\n{backup_path}"
-                )
-                dialog.accept()
-            
-        except Exception as e:
-            QMessageBox.critical(dialog, "Error", f"Error al ejecutar el respaldo: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-            
-    def schedule_backup_task(self, backup_path, is_full_backup, selected_collections, 
-                           compress_backup, compression_level, frequency, schedule_time, day_of_week):
-        """Programar un respaldo para ejecutarse periódicamente"""
-        try:
-            # Crear directorio de configuración
-            config_dir = os.path.join(os.path.expanduser("~"), ".mongodb_manager")
-            if not os.path.exists(config_dir):
-                os.makedirs(config_dir)
-                
-            # Archivo para almacenar tareas programadas
-            tasks_file = os.path.join(config_dir, "scheduled_backups.json")
-            
-            # Cargar tareas existentes
-            tasks = []
-            if os.path.exists(tasks_file):
-                try:
-                    with open(tasks_file, 'r', encoding='utf-8') as f:
-                        tasks = json.load(f)
-                except json.JSONDecodeError as e:
-                    print(f"Error al cargar tareas existentes: {e}")
-                    tasks = []
-                except Exception as e:
-                    print(f"Error al cargar tareas existentes: {e}")
-                    tasks = []
-            
-            # Crear nueva tarea
-            task_id = f"backup_{self.database_name}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-            
-            # Convertir colecciones seleccionadas a una lista
-            collections_list = selected_collections
-            
-            time_str = schedule_time.toString("HH:mm")
-            
-            # Crear nueva tarea
-            task = {
-                "id": task_id,
-                "type": "backup",
-                "database": self.database_name,
-                "connection_string": self.connection_string,
-                "path": backup_path,
-                "is_full_backup": is_full_backup,
-                "selected_collections": collections_list,
-                "compress": compress_backup,
-                "compression_level": compression_level,
-                "frequency": frequency,
-                "time": time_str,
-                "day_of_week": day_of_week,
-                "created_at": datetime.datetime.now().isoformat(),
-                "last_run": None,
-                "next_run": None
-            }
-            
-            # Calcular próxima ejecución
-            now = datetime.datetime.now()
-            run_time = datetime.datetime.strptime(time_str, "%H:%M").time()
-            next_run = datetime.datetime.combine(now.date(), run_time)
-            
-            if next_run <= now:
-                next_run += datetime.timedelta(days=1)
-                
-            if frequency == "Semanal":
-                # Convertir día de la semana a número (0 = lunes, 6 = domingo)
-                days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                target_day = days.index(day_of_week)
-                current_day = next_run.weekday()
-                
-                # Calcular días hasta el día objetivo
-                days_until_target = (target_day - current_day) % 7
-                if days_until_target == 0 and next_run <= now:
-                    days_until_target = 7
-                    
-                next_run += datetime.timedelta(days=days_until_target)
-            elif frequency == "Mensual":
-                # Para respaldos mensuales, ejecutar el primer día del mes
-                next_month = next_run.replace(day=1) + datetime.timedelta(days=32)
-                next_run = next_month.replace(day=1)
-                
-            task["next_run"] = next_run.isoformat()
-            
-            # Agregar tarea a la lista
-            tasks.append(task)
-            
-            # Guardar tareas
-            with open(tasks_file, 'w', encoding='utf-8') as f:
-                json.dump(tasks, f, indent=2, default=str)
-            
-            # Informar al usuario
-            QMessageBox.information(
-                self,
-                "Respaldo Programado",
-                f"El respaldo ha sido programado con frecuencia {frequency.lower()} a las {time_str}.\n\n"
-                f"Próxima ejecución: {next_run.strftime('%d/%m/%Y %H:%M')}")
-            
-            # Crear o actualizar una tarea programada en el sistema (solo ejemplo, no implementado realmente)
-            self.show_status_message("Respaldo programado correctamente")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al programar el respaldo: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-            
-    def restore_database(self):
-        """Restaurar la base de datos desde un respaldo"""
-        if self.db is None:
-            QMessageBox.critical(self, "Error", "No hay conexión a la base de datos")
-            return
-
-        # Abrir diálogo para seleccionar archivo de respaldo
-        backup_file, _ = QFileDialog.getOpenFileName(
-            self,
-            "Seleccionar archivo de respaldo",
-            os.path.expanduser("~"),
-            "Archivos de respaldo (*.gz *.json)"
-        )
-
-        if not backup_file:
-            return
-
-        try:
-            # Determinar si es un archivo comprimido
-            is_compressed = backup_file.lower().endswith('.gz')
-
-            # Leer el archivo
-            if is_compressed:
-                with gzip.open(backup_file, 'rt', encoding='utf-8') as f:
-                    backup_data = json.load(f)
-            else:
-                with open(backup_file, 'r', encoding='utf-8') as f:
-                    backup_data = json.load(f)
-
-            # Verificar estructura del respaldo
-            if not isinstance(backup_data, dict) or 'collections' not in backup_data:
-                raise ValueError("Archivo de respaldo inválido")
-
-            # Mostrar progreso
-            progress = QProgressDialog("Restaurando datos...", "Cancelar", 0, 100, self)
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setMinimumDuration(0)
-
-            # Procesar cada colección
-            total_collections = len(backup_data['collections'])
-            current_collection = 0
-
-            for collection_name, collection_data in backup_data['collections'].items():
-                if progress.wasCanceled():
-                    break
-
-            # Seleccionar directorio de respaldo
-            backup_dir = QFileDialog.getExistingDirectory(
-                self,
-                "Seleccionar Directorio de Respaldo",
-                os.path.join(os.path.expanduser("~"), "MongoDB_Backups")
-            )
-            if not backup_dir:
-                return
-                return
-                
-            # Verificar si es un respaldo válido
-            metadata_path = os.path.join(backup_dir, 'metadata.json')
-            if not os.path.exists(metadata_path):
-                QMessageBox.warning(self, "Advertencia", "El directorio seleccionado no contiene un respaldo válido (falta archivo metadata.json)")
-                return
-                
-            # Leer metadatos del respaldo
-            try:
-                with open(metadata_path, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
-                    
-                # Verificar compatibilidad de base de datos
-                backup_db = metadata.get('database', '')
-                if backup_db != self.database_name:
-                    confirm = QMessageBox.question(
-                        self,
-                        "Diferente Base de Datos",
-                        f"El respaldo es de la base de datos '{backup_db}', pero está restaurando en '{self.database_name}'.\n\n"
-                        "¿Desea continuar con la restauración en la base de datos actual?",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.No
-                    )
-                    
-                    if confirm != QMessageBox.StandardButton.Yes:
-                        return
-                        
-                # Obtener colecciones disponibles en el respaldo
-                available_collections = metadata.get('collections', [])
-                is_compressed = metadata.get('compressed', False)
-                
-                if not available_collections:
-                    QMessageBox.warning(self, "Advertencia", "El respaldo no contiene colecciones para restaurar")
-                    return
-                    
-                # Crear diálogo de restauración
-                restore_dialog = QDialog(self)
-                restore_dialog.setWindowTitle("Restaurar Base de Datos desde Respaldo")
-                restore_dialog.resize(600, 500)
-                
-                layout = QVBoxLayout(restore_dialog)
-                
-                # Información del respaldo
-                timestamp = metadata.get('timestamp', 'Desconocido')
-                if isinstance(timestamp, str) and len(timestamp) > 19:
-                    timestamp = timestamp[:19].replace("T", " ")  # Formatear ISO timestamp
-                
-                info_text = f"""
-<h3>Restaurar desde Respaldo</h3>
-<p><b>Base de datos del respaldo:</b> {backup_db}</p>
-<p><b>Fecha del respaldo:</b> {timestamp}</p>
-<p><b>Colecciones disponibles:</b> {len(available_collections)}</p>
-<p><b>Compresión:</b> {'Activada' if is_compressed else 'Desactivada'}</p>
-"""
-                
-                info_label = QLabel(info_text)
-                info_label.setTextFormat(Qt.TextFormat.RichText)
-                layout.addWidget(info_label)
-                
-                # Opciones de restauración
-                options_group = QGroupBox("Opciones de Restauración")
-                options_layout = QVBoxLayout(options_group)
-                
-                # Radio buttons para tipo de restauración
-                restore_type_group = QButtonGroup(restore_dialog)
-                
-                full_restore_radio = QRadioButton("Restauración Completa (todas las colecciones del respaldo)")
-                full_restore_radio.setChecked(True)
-                restore_type_group.addButton(full_restore_radio)
-                options_layout.addWidget(full_restore_radio)
-                
-                selective_restore_radio = QRadioButton("Restauración Selectiva (colecciones específicas)")
-                restore_type_group.addButton(selective_restore_radio)
-                options_layout.addWidget(selective_restore_radio)
-                
-                layout.addWidget(options_group)
-                
-                # Lista de colecciones disponibles para restauración selectiva
-                collections_group = QGroupBox("Seleccionar Colecciones")
-                collections_layout = QVBoxLayout(collections_group)
-                
-                collections_list = QListWidget()
-                collections_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-                
-                for collection in available_collections:
-                    item = QListWidgetItem(collection)
-                    # Preseleccionar todas las colecciones
-                    item.setSelected(True)
-                    collections_list.addItem(item)
-                
-                collections_layout.addWidget(collections_list)
-                collections_group.setEnabled(False)  # Inicialmente deshabilitado
-                layout.addWidget(collections_group)
-                
-                # Conectar cambio de tipo de restauración con habilitación de selección de colecciones
-                selective_restore_radio.toggled.connect(collections_group.setEnabled)
-
-                # Opciones de conflicto
-                conflict_group = QGroupBox("Manejo de Conflictos")
-                conflict_layout = QVBoxLayout(conflict_group)
-                
-                conflict_option = QComboBox()
-                conflict_option.addItems([
-                    "Reemplazar documentos existentes",
-                    "Mantener documentos existentes si tienen la misma ID",
-                    "Solo añadir documentos que no existan"
-                ])
-                conflict_layout.addWidget(conflict_option)
-                
-                drop_first = QCheckBox("Eliminar colecciones existentes antes de restaurar")
-                conflict_layout.addWidget(drop_first)
-                
-                layout.addWidget(conflict_group)
-                
-                # Botones de acción
-                button_box = QDialogButtonBox()
-                
-                restore_button = QPushButton("Iniciar Restauración")
-                restore_button.setStyleSheet("background-color: #2ecc71; color: white;")
-                button_box.addButton(restore_button, QDialogButtonBox.ButtonRole.AcceptRole)
-                
-                cancel_button = QPushButton("Cancelar")
-                button_box.addButton(cancel_button, QDialogButtonBox.ButtonRole.RejectRole)
-                
-                layout.addWidget(button_box)
-                
-                # Conectar botones
-                restore_button.clicked.connect(lambda: self.execute_restore(
-                    backup_dir,
-                    metadata,
-                    full_restore_radio.isChecked(),
-                    [collections_list.item(i).text() for i in range(collections_list.count()) 
-                     if collections_list.item(i).isSelected()],
-                    conflict_option.currentIndex(),
-                    drop_first.isChecked(),
-                    restore_dialog
-                ))
-                
-                cancel_button.clicked.connect(restore_dialog.reject)
-                
-                # Mostrar el diálogo
-                restore_dialog.exec()
-                
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Error al procesar los metadatos del respaldo: {str(e)}")
-                self.show_status_message(f"Error: {str(e)}", error=True)
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al preparar la restauración: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-            
-    def execute_restore(self, backup_dir, metadata, is_full_restore, selected_collections,
-                        conflict_mode, drop_first, dialog):
-        """Ejecutar la restauración con las opciones configuradas."""
-        try:
-            all_collections = metadata.get("collections", [])
-
-            if not is_full_restore and not selected_collections:
-                QMessageBox.warning(
-                    dialog, "Advertencia",
-                    "Por favor, seleccione al menos una colección para restaurar"
-                )
-                return
-
-            collections_to_restore = (
-                all_collections if is_full_restore else selected_collections
-            )
-            is_compressed = metadata.get("compressed", False)
-            total_cols = len(collections_to_restore)
-            collections_dir = os.path.join(backup_dir, "collections")
-            errors = []
-            restored_collections = [0]
-
-            progress_dialog = QProgressDialog(
-                "Preparando restauración...", "Cancelar", 0, 100, dialog
-            )
-            progress_dialog.setWindowTitle("Restauración en progreso")
-            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-            progress_dialog.setAutoClose(False)
-            progress_dialog.setAutoReset(False)
-            progress_dialog.setValue(0)
-
-            def perform_restore():
-                for i, collection_name in enumerate(collections_to_restore):
-                    if progress_dialog.wasCanceled():
-                        break
-
-                    pct = 10 + int((i / total_cols) * 80)
-                    progress_dialog.setValue(pct)
-                    progress_dialog.setLabelText(
-                        f"Restaurando colección: {collection_name}..."
-                    )
-
-                    try:
-                        col_file = os.path.join(
-                            collections_dir, f"{collection_name}.json"
-                        )
-                        col_gz = col_file + ".gz"
-
-                        if not os.path.exists(col_file) and not os.path.exists(col_gz):
-                            errors.append(
-                                f"Archivo '{collection_name}' no encontrado"
-                            )
-                            continue
-
-                        if drop_first and collection_name in self.db.list_collection_names():
-                            self.db.drop_collection(collection_name)
-
-                        documents = []
-                        if is_compressed and os.path.exists(col_gz):
-                            with gzip.open(col_gz, "rt", encoding="utf-8") as f:
-                                documents = json.load(f)
-                        elif os.path.exists(col_file):
-                            with open(col_file, "r", encoding="utf-8") as f:
-                                documents = json.load(f)
-
-                        if not documents:
-                            errors.append(
-                                f"Sin documentos en '{collection_name}'"
-                            )
-                            continue
-
-                        from bson.objectid import ObjectId
-                        for doc in documents:
-                            if (
-                                "_id" in doc
-                                and isinstance(doc["_id"], str)
-                                and doc["_id"].startswith("ObjectId(")
-                            ):
-                                id_str = (
-                                    doc["_id"]
-                                    .replace("ObjectId('", "")
-                                    .replace("')", "")
-                                    .replace('"', "")
-                                )
-                                try:
-                                    doc["_id"] = ObjectId(id_str)
-                                except Exception:
-                                    pass
-
-                        col = self.db[collection_name]
-                        if conflict_mode == 0:
-                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
-                            to_rm = [d for d in documents if d["_id"] in existing]
-                            if to_rm:
-                                col.delete_many({"_id": {"$in": [d["_id"] for d in to_rm]}})
-                            col.insert_many(documents)
-                        elif conflict_mode == 1:
-                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
-                            to_ins = [d for d in documents if d["_id"] not in existing]
-                            if to_ins:
-                                col.insert_many(to_ins)
-                        else:
-                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
-                            to_ins = [d for d in documents if d["_id"] not in existing]
-                            if to_ins:
-                                col.insert_many(to_ins)
-
-                        idx_file = os.path.join(
-                            collections_dir, f"{collection_name}_indexes.json"
-                        )
-                        idx_gz = idx_file + ".gz"
-                        indexes = []
-                        if os.path.exists(idx_file):
-                            with open(idx_file, "r", encoding="utf-8") as f_i:
-                                indexes = json.load(f_i)
-                        elif os.path.exists(idx_gz):
-                            with gzip.open(idx_gz, "rt", encoding="utf-8") as f_i:
-                                indexes = json.load(f_i)
-
-                        for idx in indexes:
-                            if idx.get("name") != "_id_":
-                                try:
-                                    col.create_index(idx["key"], name=idx.get("name"))
-                                except Exception:
-                                    pass
-
-                        restored_collections[0] += 1
-
-                    except Exception as exc:
-                        errors.append(f"Error restaurando '{collection_name}': {exc}")
-
-                report_file = os.path.join(backup_dir, "restore_report.txt")
-                try:
-                    with open(report_file, "w", encoding="utf-8") as f:
-                        tipo = "Completa" if is_full_restore else "Selectiva"
-                        print("Informe de restauracion", file=f)
-                        print(f"Tipo: {tipo}", file=f)
-                        print(
-                            f"Colecciones restauradas: {restored_collections[0]}"
-                            f" de {len(collections_to_restore)}",
-                            file=f,
-                        )
-                        if errors:
-                            print("", file=f)
-                            print("Errores durante la restauracion:", file=f)
-                            for err in errors:
-                                print(f"  - {err}", file=f)
-                except Exception:
-                    pass
-
-                progress_dialog.setValue(100)
-                progress_dialog.setLabelText(
-                    f"Restauracion completada. "
-                    f"{restored_collections[0]} colecciones restauradas."
-                )
-
-            restore_thread = threading.Thread(target=perform_restore)
-            restore_thread.daemon = True
-            restore_thread.start()
-
-            while restore_thread.is_alive() and not progress_dialog.wasCanceled():
-                QApplication.processEvents()
-
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Error", f"Error durante la restauracion: {str(e)}"
-            )
-            self.show_status_message(f"Error: {str(e)}", error=True)
-
-    def maintain_collections(self):
-        """Realizar tareas de mantenimiento en colecciones"""
-        if self.db is None:
-            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
-            return
-            
-        try:
-            # Obtener colecciones disponibles
-            collections = self.db.list_collection_names()
-            
-            if not collections:
-                QMessageBox.information(self, "Información", "No hay colecciones disponibles para mantenimiento")
-                return
-            
-            # Crear diálogo de mantenimiento
-            maintenance_dialog = QDialog(self)
-            maintenance_dialog.setWindowTitle("Mantenimiento de Colecciones")
-            maintenance_dialog.resize(700, 550)
-            
-            layout = QVBoxLayout(maintenance_dialog)
-            
-            # Título e información
-            title_label = QLabel("<h2>Mantenimiento de Colecciones</h2>")
-            title_label.setTextFormat(Qt.TextFormat.RichText)
-            layout.addWidget(title_label)
-            
-            info_label = QLabel("Seleccione las colecciones a mantener y las operaciones de mantenimiento a realizar.")
-            info_label.setWordWrap(True)
-            layout.addWidget(info_label)
-            
-            # Selección de colecciones
-            collections_group = QGroupBox("Seleccionar Colecciones")
-            collections_layout = QVBoxLayout(collections_group)
-            
-            collections_list = QListWidget()
-            collections_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-            
-            for collection in collections:
-                item = QListWidgetItem(collection)
-                collections_list.addItem(item)
-                
-            collections_layout.addWidget(collections_list)
-            
-            # Botones para seleccionar todos/ninguno
-            selection_buttons = QHBoxLayout()
-            
-            select_all_button = QPushButton("Seleccionar Todos")
-            select_all_button.clicked.connect(lambda: self.select_all_items(collections_list, True))
-            selection_buttons.addWidget(select_all_button)
-            
-            clear_selection_button = QPushButton("Limpiar Selección")
-            clear_selection_button.clicked.connect(lambda: self.select_all_items(collections_list, False))
-            selection_buttons.addWidget(clear_selection_button)
-            
-            collections_layout.addLayout(selection_buttons)
-            layout.addWidget(collections_group)
-            
-            # Opciones de mantenimiento
-            maintenance_group = QGroupBox("Operaciones de Mantenimiento")
-            maintenance_layout = QVBoxLayout(maintenance_group)
-            
-            # Compactar colecciones
-            compact_check = QCheckBox("Compactar colecciones (reduce fragmentación)")
-            maintenance_layout.addWidget(compact_check)
-            
-            # Reparar índices
-            repair_indexes_check = QCheckBox("Reparar índices (reconstruye índices dañados)")
-            maintenance_layout.addWidget(repair_indexes_check)
-            
-            # Validar documentos
-            validate_docs_check = QCheckBox("Validar integridad de documentos")
-            maintenance_layout.addWidget(validate_docs_check)
-            
-            # Eliminar documentos duplicados
-            remove_duplicates_check = QCheckBox("Eliminar documentos duplicados")
-            maintenance_layout.addWidget(remove_duplicates_check)
-            
-            # Actualizar estadísticas
-            update_stats_check = QCheckBox("Actualizar estadísticas")
-            update_stats_check.setChecked(True)
-            maintenance_layout.addWidget(update_stats_check)
-            
-            layout.addWidget(maintenance_group)
-            
-            # Opciones avanzadas
-            advanced_group = QGroupBox("Opciones Avanzadas")
-            advanced_layout = QVBoxLayout(advanced_group)
-            
-            # Programar mantenimiento
-            schedule_check = QCheckBox("Programar mantenimiento periódico")
-            advanced_layout.addWidget(schedule_check)
-            
-            # Opciones de programación
-            schedule_options = QWidget()
-            schedule_options.setEnabled(False)
-            schedule_options_layout = QFormLayout(schedule_options)
-            
-            frequency_combo = QComboBox()
-            frequency_combo.addItems(["Diario", "Semanal", "Mensual"])
-            schedule_options_layout.addRow("Frecuencia:", frequency_combo)
-            
-            time_edit = QTimeEdit()
-            time_edit.setTime(QTime(3, 0))  # 3:00 AM por defecto
-            schedule_options_layout.addRow("Hora:", time_edit)
-            
-            advanced_layout.addWidget(schedule_options)
-            
-            # Conectar checkbox con opciones de programación
-            schedule_check.toggled.connect(schedule_options.setEnabled)
-            
-            layout.addWidget(advanced_group)
-            
-            # Resultados
-            results_group = QGroupBox("Resultados de Mantenimiento")
-            results_layout = QVBoxLayout(results_group)
-            
-            results_text = QTextEdit()
-            results_text.setReadOnly(True)
-            results_text.setPlaceholderText("Los resultados de las operaciones de mantenimiento se mostrarán aquí.")
-            results_layout.addWidget(results_text)
-            
-            layout.addWidget(results_group)
-            
-            # Botones de acción
-            button_layout = QHBoxLayout()
-            
-            execute_button = QPushButton("Ejecutar Mantenimiento")
-            execute_button.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
-            button_layout.addWidget(execute_button)
-            
-            close_button = QPushButton("Cerrar")
-            button_layout.addWidget(close_button)
-            
-            layout.addLayout(button_layout)
-            
-            # Conectar señales
-            execute_button.clicked.connect(lambda: self.execute_maintenance(
-                [collections_list.item(i).text() for i in range(collections_list.count()) 
-                 if collections_list.item(i).isSelected()],
-                compact_check.isChecked(),
-                repair_indexes_check.isChecked(),
-                validate_docs_check.isChecked(),
-                remove_duplicates_check.isChecked(),
-                update_stats_check.isChecked(),
-                schedule_check.isChecked(),
-                frequency_combo.currentText(),
-                time_edit.time(),
-                results_text,
-                maintenance_dialog
-            ))
-            
-            close_button.clicked.connect(maintenance_dialog.reject)
-            
-            # Mostrar el diálogo
-            maintenance_dialog.exec()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al iniciar mantenimiento: {str(e)}")
-            self.show_status_message(f"Error: {str(e)}", error=True)
-    
-    def select_all_items(self, list_widget, select):
-        """Seleccionar o deseleccionar todos los elementos de un QListWidget"""
-        for i in range(list_widget.count()):
-            list_widget.item(i).setSelected(select)
-    
-    def execute_maintenance(self, selected_collections, compact, repair_indexes, 
-                          validate_docs, remove_duplicates, update_stats,
-                          schedule_maintenance, frequency, schedule_time,
-                          results_text, dialog):
-        """Ejecutar operaciones de mantenimiento en las colecciones seleccionadas"""
-        if not selected_collections:
-            QMessageBox.warning(dialog, "Advertencia", "Debe seleccionar al menos una colección para mantenimiento")
-            return
-        
-        try:
-            # Si se programó mantenimiento
-            if schedule_maintenance:
-                self.schedule_maintenance_task(
-                    selected_collections, compact, repair_indexes, 
-                    validate_docs, remove_duplicates, update_stats,
-                    frequency, schedule_time
-                )
-                results_text.append("✅ Programación de mantenimiento configurada correctamente.")
-                results_text.append(f"📅 Frecuencia: {frequency}")
-                results_text.append(f"🕒 Hora: {schedule_time.toString('HH:mm')}")
-                return
-
-            # Crear diálogo de progreso
-            progress = QProgressDialog("Iniciando operaciones de mantenimiento...", "Cancelar", 0, 100, dialog)
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setValue(0)
-            progress.show()
-
-            # Resultado general
-            overall_results = []
-
-            # Mensaje de inicio
-            start_time = datetime.datetime.now()
-            results_text.clear()
-            results_text.append(f"🚀 Iniciando mantenimiento: {start_time.strftime('%d/%m/%Y %H:%M:%S')}")
-            results_text.append(f"📊 Colecciones seleccionadas: {len(selected_collections)}")
-
-            # Obtener colecciones disponibles
-            collections = self.db.list_collection_names()
-            
-            if not collections:
-                QMessageBox.warning(dialog, "Advertencia", "No hay colecciones disponibles para mantenimiento")
-                return
-
-            # Procesar cada colección
-            for i, collection_name in enumerate(selected_collections, 1):
-                if progress.wasCanceled():
-                    break
-
-                try:
-                    # Obtener la colección
-                    collection = self.db[collection_name]
-                    
-                    # Mostrar progreso
-                    progress.setValue(int(i / len(selected_collections) * 100))
-                    progress.setLabelText(f"Procesando {collection_name} ({i}/{len(selected_collections)})...")
-
-                    # Compactar colección
-                    if compact:
-                        results_text.append(f"\nCompactando {collection_name}...")
-                        try:
-                            result = collection.compact()
-                            results_text.append(f"✅ Compactación completada: {result}")
-                        except Exception as e:
-                            results_text.append(f"❌ Error compactando {collection_name}: {str(e)}")
-
-                    # Reparar índices
-                    if repair_indexes:
-                        results_text.append(f"\nReparando índices de {collection_name}...")
-                        try:
-                            # MongoDB no tiene una operación directa de reparación de índices
-                            # En su lugar, reconstruimos los índices
-                            indexes = collection.list_indexes()
-                            for index in indexes:
-                                if index["name"] != "_id_":  # No reconstruir el índice _id_
-                                    collection.drop_index(index["name"])
-                                    collection.create_index(index["key"], name=index["name"])
-                            results_text.append(f"✅ Índices reparados")
-                        except Exception as e:
-                            results_text.append(f"❌ Error reparando índices: {str(e)}")
-
-                    # Validar documentos
-                    if validate_docs:
-                        results_text.append(f"\nValidando documentos de {collection_name}...")
-                        try:
-                            validation = collection.validate()
-                            results_text.append(f"✅ Validación completada: {validation['valid']}")
-                            if not validation['valid']:
-                                results_text.append(f"⚠️ Errores encontrados: {validation['errors']}")
-                        except Exception as e:
-                            results_text.append(f"❌ Error validando documentos: {str(e)}")
-
-                    # Eliminar documentos duplicados
-                    if remove_duplicates:
-                        results_text.append(f"\nEliminando duplicados de {collection_name}...")
-                        try:
-                            # Encontrar documentos duplicados
-                            duplicates = []
-                            seen = set()
-                            for doc in collection.find():
-                                doc_id = str(doc['_id'])
-                                if doc_id in seen:
-                                    duplicates.append(doc_id)
-                                seen.add(doc_id)
-                            
-                            if duplicates:
-                                # Eliminar duplicados
-                                for doc_id in duplicates:
-                                    collection.delete_one({'_id': ObjectId(doc_id)})
-                                results_text.append(f"✅ Eliminados {len(duplicates)} duplicados")
-                            else:
-                                results_text.append("✅ No se encontraron duplicados")
-                        except Exception as e:
-                            results_text.append(f"❌ Error eliminando duplicados: {str(e)}")
-
-                    # Actualizar estadísticas
-                    if update_stats:
-                        results_text.append(f"\nActualizando estadísticas de {collection_name}...")
-                        try:
-                            stats = collection.stats()
-                            results_text.append(f"✅ Estadísticas actualizadas")
-                            results_text.append(f"  - Documentos: {stats['count']:,}")
-                            results_text.append(f"  - Tamaño: {stats['size'] / (1024 * 1024):.2f} MB")
-                        except Exception as e:
-                            results_text.append(f"❌ Error actualizando estadísticas: {str(e)}")
-
-                except Exception as e:
-                    results_text.append(f"❌ Error procesando {collection_name}: {str(e)}")
-                    continue
-
-            # Finalizar
-            end_time = datetime.datetime.now()
-            elapsed = end_time - start_time
-            progress.setValue(100)
-            
-            # Añadir resumen
-            results_text.append("=" * 50)
-            results_text.append(f"✅ Mantenimiento completado en {elapsed.total_seconds():.2f} segundos")
-            results_text.append(f"📊 {len(selected_collections)} colecciones procesadas")
-            
-            # Actualizar la interfaz
-            self.show_collections()
-            self.update_database_stats()
-            
-        except Exception as e:
-            results_text.append(f"❌ Error durante mantenimiento: {str(e)}")
-            QMessageBox.critical(dialog, "Error", f"Error durante operaciones de mantenimiento: {str(e)}")
-
-    def schedule_maintenance_task(self, selected_collections, compact, repair_indexes, 
-                                validate_docs, remove_duplicates, update_stats,
-                                frequency, schedule_time):
-        """Programar tareas de mantenimiento para ejecutarse periódicamente"""
-        try:
-            # Crear directorio de configuración
-            config_dir = os.path.join(os.path.expanduser("~"), ".mongodb_manager")
-            if not os.path.exists(config_dir):
-                os.makedirs(config_dir)
-                
-            # Archivo para almacenar tareas programadas
-            tasks_file = os.path.join(config_dir, "scheduled_maintenance.json")
-            
-            # Cargar tareas existentes
-            tasks = []
-            if os.path.exists(tasks_file):
-                try:
-                    with open(tasks_file, 'r', encoding='utf-8') as f:
-                        tasks = json.load(f)
-                except json.JSONDecodeError as e:
-                    print(f"Error al cargar tareas existentes: {e}")
-                    tasks = []
-                except Exception as e:
-                    print(f"Error al cargar tareas existentes: {e}")
-                    tasks = []
-            
-            # Crear nueva tarea
-            task_id = f"maintenance_{self.database_name}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-            
-            # Convertir colecciones seleccionadas a una lista
-            collections_list = selected_collections
-            
-            time_str = schedule_time.toString("HH:mm")
-            
-            # Crear nueva tarea
-            task = {
-                "id": task_id,
-                "type": "maintenance",
-                "database": self.database_name,
-                "connection_string": self.connection_string,
-                "collections": collections_list,
-                "operations": {
-                    "compact": compact,
-                    "repair_indexes": repair_indexes,
-                    "validate_docs": validate_docs,
-                    "remove_duplicates": remove_duplicates,
-                    "update_stats": update_stats
-                },
-                "frequency": frequency,
-                "time": time_str,
-                "created_at": datetime.datetime.now().isoformat(),
-                "last_run": None,
-                "next_run": None
-            }
-            
-            # Calcular próxima ejecución
-            now = datetime.datetime.now()
-            run_time = datetime.datetime.strptime(time_str, "%H:%M").time()
-            next_run = datetime.datetime.combine(now.date(), run_time)
-            
-            if next_run <= now:
-                next_run += datetime.timedelta(days=1)
-            
-            if frequency == "Semanal":
-                # Para programación semanal, usar el próximo lunes
-                days_ahead = 7 - next_run.weekday()
-                if days_ahead == 7 and next_run > now:
-                    days_ahead = 0
-                next_run += datetime.timedelta(days=days_ahead)
-            
-            elif frequency == "Mensual":
-                # Para programación mensual, usar el primer día del próximo mes
-                if next_run.day != 1 or (next_run.day == 1 and next_run <= now):
-                    # Avanzar al próximo mes
-                    if next_run.month == 12:
-                        next_run = next_run.replace(year=next_run.year + 1, month=1, day=1)
-                    else:
-                        next_run = next_run.replace(month=next_run.month + 1, day=1)
-            
-            task["next_run"] = next_run.isoformat()
-            
-            # Agregar tarea a la lista
-            tasks.append(task)
-            
-            # Guardar tareas
-            with open(tasks_file, 'w', encoding='utf-8') as f:
-                json.dump(tasks, f, indent=2, default=str)
-            
-            # Informar al usuario
-            QMessageBox.information(
-                self,
-                "Mantenimiento Programado",
-                f"El mantenimiento ha sido programado con frecuencia {frequency.lower()} a las {time_str}.\n\n"
-                f"Próxima ejecución: {next_run.strftime('%d/%m/%Y %H:%M')}")
-
-            # Mostrar mensaje en la barra de estado
-            self.show_status_message(f"Mantenimiento programado para ejecutarse {frequency.lower()} a las {time_str}")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al programar mantenimiento: {str(e)}")
-            self.show_status_message(f"Error al programar mantenimiento: {str(e)}", error=True)
-
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
