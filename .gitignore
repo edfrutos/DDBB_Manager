@@ -37,3 +37,7 @@ ddbb_manager/
 # Archivos de entorno no gestionados
 .windsurfrules
 .qodo/
+
+# Índices y artefactos de herramientas de análisis de código
+.codegraph/
+graphify-out/
