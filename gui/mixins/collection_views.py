@@ -322,7 +322,7 @@ class CollectionViewMixin:
     def view_collection_data(self, index):
         """Handle double-click event on collections tree to view collection data."""
         try:
-            if not index.isValid() or not self.db:
+            if not index.isValid() or self.db is None:
                 return
 
             model = index.model()

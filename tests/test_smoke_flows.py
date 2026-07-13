@@ -843,8 +843,23 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.meta_access_table.items[(2, 0)], "Equipo Datos")
 
     def test_show_collections_populates_real_tree_widget(self):
-        self.window.db.create_collection("alpha")
-        self.window.db["alpha"].insert_one({"name": "uno"})
+        class BoollessDB:
+            def __init__(self, backing):
+                self._backing = backing
+
+            def __bool__(self):
+                raise AssertionError("Database object should not be evaluated as bool")
+
+            def __getitem__(self, key):
+                return self._backing[key]
+
+            def list_collection_names(self):
+                return self._backing.list_collection_names()
+
+        backing_db = self.window.db
+        backing_db.create_collection("alpha")
+        backing_db["alpha"].insert_one({"name": "uno"})
+        self.window.db = BoollessDB(backing_db)
         self.window.show_collections = MainWindow.show_collections.__get__(self.window, MainWindow)
         self.window.load_collection_metadata = lambda collection_name: None
 

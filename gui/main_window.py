@@ -1051,7 +1051,7 @@ Ejemplos de consultas:
                     self.collections_tree.viewport().update()
                     
                     # If tree is empty but should have items, reload collections
-                    if self.db and self.collections_model and self.collections_model.rowCount() == 0:
+                    if self.db is not None and self.collections_model and self.collections_model.rowCount() == 0:
                         print("Collections tree is empty, reloading collections")
                         self.show_collections()
                 except Exception as e:
@@ -1065,7 +1065,7 @@ Ejemplos de consultas:
                     print("Collections tree recreated during UI refresh")
                     try:
                         # After recreation, show collections
-                        if self.db:
+                        if self.db is not None:
                             self.show_collections()
                     except Exception as reload_error:
                         print(f"Error reloading collections after tree recreation: {reload_error}")
