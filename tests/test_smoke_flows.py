@@ -79,17 +79,24 @@ class FakeCollection:
         return self.delete_one(query)
 
     def update_one(self, query, update):
+        return self._update(query, update, first_only=True)
+
+    def update_many(self, query, update):
+        return self._update(query, update, first_only=False)
+
+    def _update(self, query, update, first_only=False):
         matched = 0
         modified = 0
         for doc in self.docs:
             if self._matches(doc, query):
-                matched = 1
+                matched += 1
                 set_fields = update.get("$set", {})
                 before = {key: doc.get(key) for key in set_fields}
                 doc.update(set_fields)
                 if any(before.get(key) != doc.get(key) for key in set_fields):
-                    modified = 1
-                break
+                    modified += 1
+                if first_only:
+                    break
         return SimpleNamespace(matched_count=matched, modified_count=modified)
 
     def validate(self):
@@ -908,6 +915,27 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.collection_view_tabs.current_index, 0)
         self.assertIn(("Mostrando datos de alpha", False), messages)
         self.assertIn(("metadata", "alpha"), messages)
+
+    def test_query_editor_invalid_update_and_delete_branches(self):
+        self.window.db.create_collection("alpha")
+        self.window.db["alpha"].insert_one({"name": "uno", "status": "old"})
+        self.window.db["alpha"].insert_one({"name": "dos", "status": "old"})
+        self.window.results_view.setPlainText("")
+
+        self.window.query_editor.setPlainText('db.alpha.updateOne({"name":"uno"}')
+        self.window.execute_query()
+        self.assertIn("Invalid query format", self.window.results_view.toPlainText())
+
+        self.window.query_editor.setPlainText('db.alpha.updateOne({"name":"uno"},{"$set":{"status":"new"}})')
+        self.window.execute_query()
+        updated = self.window.db["alpha"].find_one({"name": "uno"})
+        self.assertEqual(updated["status"], "new")
+        self.assertIn("Matched: 1, Modified: 1", self.window.results_view.toPlainText())
+
+        self.window.query_editor.setPlainText('db.alpha.deleteMany({"status":"old"})')
+        self.window.execute_query()
+        self.assertEqual(self.window.db["alpha"].count_documents({}), 1)
+        self.assertIn("Deleted 1 document(s)", self.window.results_view.toPlainText())
 
     def test_collection_owner_discovery(self):
         self.window.db.create_collection("orders")
