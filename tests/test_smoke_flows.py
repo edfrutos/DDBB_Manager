@@ -1068,6 +1068,16 @@ class SmokeFlowsTest(unittest.TestCase):
 
         self.assertEqual(captured["title"], "Estadísticas Globales de MongoDB")
 
+    def test_list_databases_by_owner_without_client_shows_warning(self):
+        warnings = []
+        self.window.client = None
+
+        with patch.object(db_mixin.QMessageBox, "warning", side_effect=lambda *args, **kwargs: warnings.append(args)), \
+             patch.object(db_mixin.QMessageBox, "critical", return_value=None):
+            self.window.list_databases_by_owner()
+
+        self.assertTrue(warnings)
+
 
 if __name__ == "__main__":
     unittest.main()
