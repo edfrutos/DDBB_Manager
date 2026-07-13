@@ -19,6 +19,7 @@ import gui.mixins.database_management as db_mixin
 import gui.mixins.backup as backup_mixin
 import gui.mixins.import_export as import_export_mixin
 import gui.mixins.collection_views as collection_views_mixin
+import gui.mixins.index_management as index_mixin
 import gui.mixins.maintenance as maintenance_mixin
 import gui.mixins.user_management as user_mixin
 
@@ -859,6 +860,18 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.meta_access_table.items[(0, 0)], "bob")
         self.assertEqual(self.window.meta_access_table.items[(0, 1)], "Edición")
         self.assertEqual(self.window.meta_access_table.items[(2, 0)], "ana")
+
+    def test_manage_indexes_without_collections_shows_notice(self):
+        self.window.db = FakeDB()
+        notices = []
+        self.window.show_status_message = lambda message, error=False: notices.append((message, error))
+
+        with patch.object(index_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(index_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(index_mixin.QMessageBox, "critical", return_value=None):
+            self.window.manage_indexes()
+
+        self.assertEqual(notices, [])
 
     def test_show_collections_supports_view_modes(self):
         self.window.db.create_collection("alpha")
