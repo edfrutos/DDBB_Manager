@@ -31,6 +31,8 @@ class IndexManagementMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("manage_indexes")
+
         try:
             # Seleccionar colección para gestionar índices
             collections = self.db.list_collection_names()

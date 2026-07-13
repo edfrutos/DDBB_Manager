@@ -271,6 +271,8 @@ class MaintenanceMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("verify_integrity")
+
         try:
             collections = self.db.list_collection_names()
 

@@ -34,6 +34,7 @@ from .mixins import (
     CollectionViewMixin,
     QueryMixin,
 )
+from .wakatime import WakaTimeTracker
 
 # Import sip for handling deleted C++ objects
 try:
@@ -271,6 +272,7 @@ class MainWindow(
         self.connection_string = os.environ.get("MONGODB_URI", "")
         print(f"Initial connection string: {'Found (length: ' + str(len(self.connection_string)) + ')' if self.connection_string else 'Not found'}")
         self.database_name = "app_catalogojoyero"
+        self.wakatime_tracker = WakaTimeTracker.from_environment()
 
         # Construir la interfaz de usuario
         self.tab_widget = QTabWidget()
@@ -292,6 +294,11 @@ class MainWindow(
 
         self.setWindowTitle("Gestor de Base de Datos MongoDB")
         self.resize(1000, 700)
+
+    def record_activity(self, entity, category="manual testing", type_="app"):
+        tracker = getattr(self, "wakatime_tracker", None)
+        if tracker:
+            tracker.heartbeat(entity, category=category, type_=type_)
 
     def setup_dashboard_tab(self):
         """Configurar la pestaña de panel de control"""

@@ -20,6 +20,8 @@ class ImportExportMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("import_data")
+
         # Seleccionar archivo a importar
         from PyQt6.QtWidgets import QFileDialog
         file_path, _ = QFileDialog.getOpenFileName(
@@ -133,6 +135,8 @@ class ImportExportMixin:
         if self.db is None:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
+
+        self.record_activity("export_data")
 
         from PyQt6.QtWidgets import QFileDialog
 

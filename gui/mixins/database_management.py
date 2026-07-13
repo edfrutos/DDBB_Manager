@@ -36,6 +36,8 @@ class DatabaseManagementMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("create_collection")
+
         dialog = CreateCollectionDialog(self)
         if dialog.exec():
             collection_name = dialog.name_input.text().strip()
@@ -58,6 +60,8 @@ class DatabaseManagementMixin:
         if self.db is None:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
+
+        self.record_activity("drop_collection")
 
         try:
             collections = self.db.list_collection_names()
@@ -317,6 +321,8 @@ class DatabaseManagementMixin:
                 dialog.reject()
             return
 
+        self.record_activity("switch_database")
+
         if db_name == self.database_name:
             QMessageBox.information(self, "Información", f"Ya está conectado a la base de datos '{db_name}'")
             if dialog:
@@ -393,6 +399,8 @@ class DatabaseManagementMixin:
         if self.client is None:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
+
+        self.record_activity("show_global_stats")
 
         try:
             # Obtener estado del servidor

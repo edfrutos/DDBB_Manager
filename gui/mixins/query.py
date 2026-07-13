@@ -14,6 +14,8 @@ class QueryMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("execute_query")
+
         query_text = self.query_editor.toPlainText().strip()
 
         if not query_text:

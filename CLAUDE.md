@@ -74,7 +74,7 @@ python main_gui.py
 venv/bin/python -m py_compile gui/main_window.py
 
 # Verificar sintaxis de los módulos principales
-venv/bin/python -m py_compile main_gui.py gui/main_window.py gui/mixins/*.py gui/dialogs/*.py core/*.py
+venv/bin/python -m py_compile main_gui.py gui/*.py gui/mixins/*.py gui/dialogs/*.py core/*.py
 
 # Smoke test de los flujos básicos sin depender de Atlas
 venv/bin/python -m unittest tests.test_smoke_flows -q
@@ -96,3 +96,4 @@ venv/bin/pip install -r requirements.txt
 - Los warnings de Pyright sobre imports de PyQt6/pymongo son esperados cuando el linter usa el Python del sistema (3.14) en lugar del venv (3.12).
 - `core/` existe para futura integración incremental. No modificar `core/db_manager.py` para cambios en la GUI — son capas independientes hasta que se fusionen explícitamente.
 - Existe `tests/test_smoke_flows.py` para validar los flujos básicos de la UI con dobles en memoria cuando no se puede llegar a MongoDB real. Cubre creación, consulta, cambio de base de datos, backup, restore, gestión de contraseñas, edición/borrado de usuarios, importación/exportación, vistas de colección y metadatos, descubrimiento de propietarios, estadísticas globales, integridad y borrado.
+- La integración con WakaTime es opcional y depende de `WAKATIME_ENABLED=true` junto con `WAKATIME_API_KEY`. Si no están definidos, no debe afectar a la ejecución ni a los tests.

@@ -28,6 +28,8 @@ class BackupMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("backup_database")
+
         try:
             collections = self.db.list_collection_names()
         except Exception as e:
@@ -377,6 +379,8 @@ class BackupMixin:
         if self.db is None:
             QMessageBox.critical(self, "Error", "No hay conexión a la base de datos")
             return
+
+        self.record_activity("restore_database")
 
         backup_dir = QFileDialog.getExistingDirectory(
             self,

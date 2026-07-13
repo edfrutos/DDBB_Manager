@@ -248,6 +248,7 @@ def main():
     main_window = MainWindow()
     # Mostrar la ventana principal y asegurarse de que sea visible
     main_window.show()
+    main_window.record_activity("app_opened")
     print("Ventana principal mostrada")
     app.processEvents()  # Procesar eventos pendientes
     

@@ -57,6 +57,18 @@ MONGODB_DATABASE=nombre_base_datos
 
 No añada `.env` al control de versiones ni publique URIs que contengan credenciales.
 
+### Integración opcional con WakaTime
+
+La aplicación puede enviar heartbeats opcionales a WakaTime si define estas variables:
+
+| Variable | Obligatoria | Descripción |
+|---|---|---|
+| `WAKATIME_ENABLED` | No | Activa la integración cuando vale `true`, `1`, `yes` o `on`. |
+| `WAKATIME_API_KEY` | Sí, para usarla | Clave de API de WakaTime. |
+| `WAKATIME_PROJECT_NAME` | No | Nombre del proyecto que aparecerá en WakaTime. |
+
+Si la integración no está activada, la aplicación sigue funcionando con normalidad.
+
 ## Inicio rápido
 
 1. Active el entorno virtual.
@@ -115,6 +127,8 @@ core/
 - `QueryMixin`
 
 `core/db_manager.py` sigue siendo una implementación independiente de referencia y todavía no es la capa de servicios de la GUI.
+
+La GUI incluye una integración opcional con WakaTime para registrar actividad de uso en los flujos principales. Es completamente opt-in y se desactiva si no se define `WAKATIME_API_KEY`.
 
 ## Desarrollo y verificación
 

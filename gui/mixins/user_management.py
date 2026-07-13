@@ -242,6 +242,8 @@ class UserManagementMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("edit_user")
+
         try:
             # Si no se proporcionan user_id y collection_name, pedir al usuario que busque primero
             if user_id is None or collection_name is None:
@@ -361,6 +363,8 @@ class UserManagementMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("delete_user")
+
         try:
             # Confirmación de eliminación
             confirm = QMessageBox.question(
@@ -402,6 +406,8 @@ class UserManagementMixin:
             QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
             return
 
+        self.record_activity("manage_password")
+
         try:
             dialog = PasswordManageDialog(self)
 
@@ -419,6 +425,7 @@ class UserManagementMixin:
     def update_user_password(self, dialog):
         """Actualizar la contraseña de un usuario seleccionado"""
         try:
+            self.record_activity("update_user_password")
             # Verificar si se seleccionó un usuario
             if not dialog.selected_user:
                 QMessageBox.warning(self, "Advertencia", "Por favor, busque y seleccione un usuario primero")
