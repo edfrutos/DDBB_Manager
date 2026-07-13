@@ -23,6 +23,10 @@ import gui.mixins.user_management as user_mixin
 
 
 class FakeCursor(list):
+    def sort(self, key, direction):
+        reverse = direction == -1
+        return FakeCursor(sorted(self, key=lambda item: item.get(key), reverse=reverse))
+
     def limit(self, count):
         return FakeCursor(self[:count])
 
@@ -185,6 +189,9 @@ class FakeLabel:
     def setText(self, value):
         self.text_value = value
 
+    def text(self):
+        return self.text_value
+
 
 class FakeTabs:
     def __init__(self):
@@ -309,6 +316,10 @@ class FakeTable:
 
     def resizeColumnsToContents(self):
         pass
+
+    def clear(self):
+        self.rows = 0
+        self.items = {}
 
 
 class FakeProgressDialog:
@@ -746,13 +757,13 @@ class SmokeFlowsTest(unittest.TestCase):
         self.window.meta_created_date = FakeLabel()
         self.window.meta_modified_date = FakeLabel()
         self.window.meta_fields_table = FakeTable()
+        self.window.meta_access_table = FakeTable()
         self.window.find_collection_owner = lambda collection_name: {
             "nombre": "Equipo Datos",
             "email": "datos@example.com",
             "departamento": "IT",
             "cargo": "Owner",
         }
-        self.window.load_access_history = lambda collection_name: None
 
         self.window.load_collection_metadata("users")
 
@@ -764,6 +775,29 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.meta_owner_department.text_value, "IT")
         self.assertEqual(self.window.meta_owner_role.text_value, "Owner")
         self.assertEqual(self.window.meta_fields_table.rows, 4)
+        self.assertEqual(self.window.meta_access_table.rows, 3)
+        self.assertEqual(self.window.meta_access_table.items[(0, 0)], "admin")
+        self.assertEqual(self.window.meta_access_table.items[(0, 1)], "Consulta")
+        self.assertEqual(self.window.meta_access_table.items[(2, 0)], "Equipo Datos")
+
+    def test_collection_access_history_uses_audit_log(self):
+        self.window.db.create_collection("audit_log")
+        self.window.db["audit_log"].insert_many([
+            {"collection": "products", "timestamp": 1, "usuario": "ana", "accion": "Consulta", "fecha": "01/01/2025 10:00"},
+            {"collection": "products", "timestamp": 3, "usuario": "bob", "accion": "Edición", "fecha": "01/01/2025 12:00"},
+            {"collection": "products", "timestamp": 2, "usuario": "carla", "accion": "Borrado", "fecha": "01/01/2025 11:00"},
+        ])
+        self.window.meta_access_table = FakeTable()
+        self.window.meta_created_date = FakeLabel()
+        self.window.meta_created_date.text_value = "02/01/2025 09:00"
+        self.window.find_collection_owner = lambda collection_name: {"nombre": "Equipo Datos"}
+
+        self.window.load_access_history("products")
+
+        self.assertEqual(self.window.meta_access_table.rows, 3)
+        self.assertEqual(self.window.meta_access_table.items[(0, 0)], "bob")
+        self.assertEqual(self.window.meta_access_table.items[(0, 1)], "Edición")
+        self.assertEqual(self.window.meta_access_table.items[(2, 0)], "ana")
 
     def test_collection_owner_discovery(self):
         self.window.db.create_collection("orders")
