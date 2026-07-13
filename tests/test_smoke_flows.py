@@ -650,6 +650,24 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(stored["password"], hashlib.sha256("supersecret".encode()).hexdigest())
         self.assertIn("password_changed_at", stored)
 
+    def test_search_user_invalid_id_shows_warning(self):
+        self.window.db.create_collection("users_unified")
+        self.window.db["users_unified"].insert_one({
+            "_id": "507f1f77bcf86cd799439011",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com",
+        })
+
+        with patch.object(user_mixin.QDialog, "exec", return_value=QDialog.DialogCode.Accepted), \
+             patch.object(user_mixin.QFormLayout, "addRow", return_value=None), \
+             patch.object(user_mixin, "QComboBox", FakeComboBox), \
+             patch.object(user_mixin, "QLineEdit", lambda: FakeLineEdit("not-an-object-id")), \
+             patch.object(user_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "critical", return_value=None):
+
+            self.window.search_user()
+
     def test_import_export_json_round_trip(self):
         source = self.window.db.create_collection("source")
         source.insert_one({"_id": "1", "name": "uno"})
