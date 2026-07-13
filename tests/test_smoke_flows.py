@@ -2,6 +2,7 @@ import os
 import json
 import unittest
 import tempfile
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from gui.main_window import MainWindow
 import gui.mixins.database_management as db_mixin
 import gui.mixins.backup as backup_mixin
 import gui.mixins.maintenance as maintenance_mixin
+import gui.mixins.user_management as user_mixin
 
 
 class FakeCursor(list):
@@ -40,7 +42,7 @@ class FakeCollection:
             return FakeCursor(self.docs[:])
         results = []
         for doc in self.docs:
-            if all(doc.get(key) == value for key, value in query.items()):
+            if self._matches(doc, query):
                 results.append(doc)
         return FakeCursor(results)
 
@@ -67,8 +69,51 @@ class FakeCollection:
     def delete_many(self, query):
         return self.delete_one(query)
 
+    def update_one(self, query, update):
+        matched = 0
+        modified = 0
+        for doc in self.docs:
+            if self._matches(doc, query):
+                matched = 1
+                set_fields = update.get("$set", {})
+                before = {key: doc.get(key) for key in set_fields}
+                doc.update(set_fields)
+                if any(before.get(key) != doc.get(key) for key in set_fields):
+                    modified = 1
+                break
+        return SimpleNamespace(matched_count=matched, modified_count=modified)
+
     def validate(self):
         return {"valid": True}
+
+    def _matches(self, document, query):
+        for key, value in query.items():
+            if key == "$or":
+                return any(self._matches(document, item) for item in value)
+            if isinstance(value, dict):
+                if "$exists" in value:
+                    if bool(value["$exists"]) != (key in document):
+                        return False
+                    continue
+                if "$regex" in value:
+                    current = str(document.get(key, ""))
+                    expected = value["$regex"]
+                    if value.get("$options") == "i":
+                        if expected.lower() not in current.lower():
+                            return False
+                    elif expected not in current:
+                        return False
+                    continue
+                if "$in" in value:
+                    if document.get(key) not in value["$in"]:
+                        return False
+                    continue
+                if document.get(key) != value:
+                    return False
+                continue
+            if document.get(key) != value:
+                return False
+        return True
 
 
 class FakeDB:
@@ -129,6 +174,46 @@ class FakeTabs:
 
     def setCurrentIndex(self, index):
         self.current_index = index
+
+
+class FakeUserLabel:
+    def __init__(self):
+        self.text_value = ""
+        self.style_value = ""
+
+    def setText(self, value):
+        self.text_value = value
+
+    def setStyleSheet(self, value):
+        self.style_value = value
+
+
+class FakeSearchType:
+    def __init__(self, value):
+        self._value = value
+
+    def currentText(self):
+        return self._value
+
+
+class FakeToggleField:
+    def __init__(self, value=""):
+        self._value = value
+        self.enabled = False
+
+    def text(self):
+        return self._value
+
+    def setEnabled(self, value):
+        self.enabled = value
+
+
+class FakeButton:
+    def __init__(self):
+        self.enabled = False
+
+    def setEnabled(self, value):
+        self.enabled = value
 
 
 class FakeProgressDialog:
@@ -322,6 +407,57 @@ class SmokeFlowsTest(unittest.TestCase):
             self.assertIn("beta", self.window.db.list_collection_names())
             self.assertEqual(self.window.db["alpha"].find_one({"_id": "a1"})["name"], "uno")
             self.assertEqual(self.window.db["beta"].find_one({"_id": "b1"})["name"], "dos")
+
+    def test_user_password_flow(self):
+        user_id = "507f1f77bcf86cd799439011"
+        self.window.db.create_collection("users_unified")
+        self.window.db["users_unified"].insert_one({
+            "_id": user_id,
+            "nombre": "Ada Lovelace",
+            "email": "ada@example.com",
+            "role": "admin",
+        })
+
+        search_dialog = SimpleNamespace(
+            search_text=FakeToggleField("Ada"),
+            search_type=FakeSearchType("Por Nombre"),
+            user_label=FakeUserLabel(),
+            password_input=FakeToggleField(""),
+            confirm_input=FakeToggleField(""),
+            save_button=FakeButton(),
+            selected_user=None,
+            selected_collection=None,
+        )
+
+        with patch.object(user_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "critical", return_value=None):
+            self.window.search_user_for_password(search_dialog)
+
+        self.assertIn("Ada Lovelace", search_dialog.user_label.text_value)
+        self.assertTrue(search_dialog.password_input.enabled)
+        self.assertTrue(search_dialog.confirm_input.enabled)
+        self.assertTrue(search_dialog.save_button.enabled)
+        self.assertEqual(search_dialog.selected_collection, "users_unified")
+        self.assertIsNotNone(search_dialog.selected_user)
+
+        password_dialog = SimpleNamespace(
+            selected_user=search_dialog.selected_user,
+            selected_collection="users_unified",
+            password_input=FakeToggleField("supersecret"),
+            confirm_input=FakeToggleField("supersecret"),
+            accept=lambda: setattr(password_dialog, "accepted", True),
+            accepted=False,
+        )
+
+        with patch.object(user_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "critical", return_value=None):
+            self.window.update_user_password(password_dialog)
+
+        stored = self.window.db["users_unified"].find_one({"_id": user_id})
+        self.assertEqual(stored["password"], hashlib.sha256("supersecret".encode()).hexdigest())
+        self.assertIn("password_changed_at", stored)
 
 
 if __name__ == "__main__":

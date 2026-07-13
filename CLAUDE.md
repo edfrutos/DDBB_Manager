@@ -95,4 +95,4 @@ venv/bin/pip install -r requirements.txt
 - **Operaciones destructivas**: `drop_collection`, `drop_database`, `cleanup_user_databases`, `delete_document` borran datos de forma irreversible. Conservar todas las confirmaciones existentes.
 - Los warnings de Pyright sobre imports de PyQt6/pymongo son esperados cuando el linter usa el Python del sistema (3.14) en lugar del venv (3.12).
 - `core/` existe para futura integración incremental. No modificar `core/db_manager.py` para cambios en la GUI — son capas independientes hasta que se fusionen explícitamente.
-- Existe `tests/test_smoke_flows.py` para validar los flujos básicos de la UI con dobles en memoria cuando no se puede llegar a MongoDB real. Cubre creación, consulta, cambio de base de datos, backup, restore, integridad y borrado.
+- Existe `tests/test_smoke_flows.py` para validar los flujos básicos de la UI con dobles en memoria cuando no se puede llegar a MongoDB real. Cubre creación, consulta, cambio de base de datos, backup, restore, gestión de contraseñas, integridad y borrado.
