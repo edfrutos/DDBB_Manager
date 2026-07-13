@@ -6,6 +6,7 @@ from .database_management import DatabaseManagementMixin
 from .index_management import IndexManagementMixin
 from .help import HelpMixin
 from .collection_views import CollectionViewMixin
+from .query import QueryMixin
 
 __all__ = [
     "MaintenanceMixin",
@@ -16,4 +17,5 @@ __all__ = [
     "IndexManagementMixin",
     "HelpMixin",
     "CollectionViewMixin",
+    "QueryMixin",
 ]

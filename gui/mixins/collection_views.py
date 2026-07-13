@@ -2,7 +2,10 @@ import datetime
 import traceback
 import time
 
-import sip
+try:
+    from PyQt6 import sip
+except ImportError:
+    import sip
 
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
@@ -400,7 +403,227 @@ class CollectionViewMixin:
                 self.data_table.resizeColumnsToContents()
                 total_docs = collection.count_documents({})
                 self.show_status_message(f"Showing {min(limit, total_docs)} of {total_docs} documents in '{collection_name}'")
+
+                if with_metadata:
+                    self.load_collection_metadata(collection_name)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load collection data: {str(e)}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al configurar la vista de colección: {str(e)}")
+
+    def load_collection_metadata(self, collection_name):
+        """Load collection metadata into the metadata panel."""
+        try:
+            if not hasattr(self, "meta_collection_name"):
+                return
+
+            collection = self.db[collection_name]
+
+            self.meta_collection_name.setText(collection_name)
+
+            doc_count = collection.count_documents({})
+            self.meta_document_count.setText(str(doc_count))
+
+            try:
+                stats = self.db.command("collStats", collection_name)
+                size_mb = stats.get("size", 0) / (1024 * 1024)
+                self.meta_size.setText(f"{size_mb:.2f} MB")
+
+                avg_size_kb = stats.get("avgObjSize", 0) / 1024
+                self.meta_avg_doc_size.setText(f"{avg_size_kb:.2f} KB")
+
+                index_count = len(list(collection.list_indexes()))
+                self.meta_indexes.setText(str(index_count))
+
+                index_size_mb = stats.get("totalIndexSize", 0) / (1024 * 1024)
+                self.meta_index_size.setText(f"{index_size_mb:.2f} MB")
+            except Exception as stats_error:
+                print(f"Error al obtener estadísticas: {stats_error}")
+
+            content_type = self.detect_collection_content_type(collection_name)
+            self.meta_content_type.setText(content_type)
+
+            owner_info = self.find_collection_owner(collection_name)
+            self.meta_owner_name.setText(owner_info.get("nombre", "Desconocido"))
+            self.meta_owner_email.setText(owner_info.get("email", "N/A"))
+            self.meta_owner_department.setText(owner_info.get("departamento", "N/A"))
+            self.meta_owner_role.setText(owner_info.get("cargo", "N/A"))
+
+            try:
+                first_doc = collection.find_one({}, sort=[("_id", 1)])
+                if first_doc and "_id" in first_doc:
+                    try:
+                        from bson.objectid import ObjectId
+                        if isinstance(first_doc["_id"], ObjectId):
+                            created_date = first_doc["_id"].generation_time
+                            self.meta_created_date.setText(created_date.strftime("%d/%m/%Y %H:%M"))
+                        else:
+                            self.meta_created_date.setText("N/A (ID no es ObjectId)")
+                    except Exception:
+                        self.meta_created_date.setText("N/A")
+                else:
+                    self.meta_created_date.setText("N/A (colección vacía)")
+
+                last_doc = collection.find_one({}, sort=[("_id", -1)])
+                if last_doc and "_id" in last_doc:
+                    try:
+                        from bson.objectid import ObjectId
+                        if isinstance(last_doc["_id"], ObjectId):
+                            modified_date = last_doc["_id"].generation_time
+                            self.meta_modified_date.setText(modified_date.strftime("%d/%m/%Y %H:%M"))
+                        else:
+                            self.meta_modified_date.setText("N/A (ID no es ObjectId)")
+                    except Exception:
+                        self.meta_modified_date.setText("N/A")
+                else:
+                    self.meta_modified_date.setText("N/A (colección vacía)")
+            except Exception as date_error:
+                print(f"Error al obtener fechas: {date_error}")
+                self.meta_created_date.setText("N/A")
+                self.meta_modified_date.setText("N/A")
+
+            self.meta_fields_table.setRowCount(0)
+            if doc_count > 0:
+                sample_doc = collection.find_one()
+                if sample_doc:
+                    field_infos = []
+                    for field, value in sample_doc.items():
+                        field_infos.append((field, type(value).__name__, self.get_field_description(field)))
+
+                    field_infos.sort(key=lambda x: x[0])
+                    self.meta_fields_table.setRowCount(len(field_infos))
+                    for i, (field, field_type, description) in enumerate(field_infos):
+                        self.meta_fields_table.setItem(i, 0, QTableWidgetItem(field))
+                        self.meta_fields_table.setItem(i, 1, QTableWidgetItem(field_type))
+                        self.meta_fields_table.setItem(i, 2, QTableWidgetItem(description))
+                    self.meta_fields_table.resizeColumnsToContents()
+
+            self.load_access_history(collection_name)
+        except Exception as e:
+            print(f"Error al cargar metadatos: {e}")
+
+    def detect_collection_content_type(self, collection_name):
+        """Detect the type of content in a collection from its structure."""
+        try:
+            collection = self.db[collection_name]
+            doc_count = collection.count_documents({})
+            if doc_count == 0:
+                return "Colección vacía"
+
+            sample_docs = list(collection.find().limit(10))
+            if not sample_docs:
+                return "Desconocido"
+
+            field_types = {}
+            data_rows_count = 0
+            has_table_structure = True
+            has_geospatial_data = False
+            has_complex_objects = False
+            excel_fields = ["sheet_name", "row", "col", "header", "value", "format"]
+            excel_match_count = 0
+
+            text_index = False
+            for idx in collection.list_indexes():
+                for field, type_val in idx.get("key", {}).items():
+                    if type_val == "text":
+                        text_index = True
+                        break
+
+            for doc in sample_docs:
+                if data_rows_count == 0:
+                    first_doc_fields = set(doc.keys())
+                elif set(doc.keys()) != first_doc_fields:
+                    has_table_structure = False
+
+                excel_fields_found = sum(1 for field in excel_fields if field in doc)
+                if excel_fields_found >= 3:
+                    excel_match_count += 1
+
+                for field, value in doc.items():
+                    field_type = type(value).__name__
+                    field_types.setdefault(field, set()).add(field_type)
+                    if field in ["location", "coordinates", "geometry"] and isinstance(value, dict):
+                        if "type" in value and "coordinates" in value:
+                            has_geospatial_data = True
+                    if isinstance(value, dict) and len(value) > 3:
+                        has_complex_objects = True
+
+                data_rows_count += 1
+
+            if excel_match_count >= min(3, len(sample_docs)):
+                return "Datos de Excel"
+            if text_index:
+                return "Documentos de texto"
+            if has_geospatial_data:
+                return "Datos geoespaciales"
+            if has_table_structure and not has_complex_objects:
+                return "Tabla de datos"
+            if collection_name.lower() in ["users", "usuarios", "clientes", "customers"]:
+                return "Datos de usuarios"
+            if collection_name.lower() in ["products", "productos", "inventory", "inventario"]:
+                return "Catálogo de productos"
+            if collection_name.lower() in ["logs", "audit", "eventos", "events"]:
+                return "Registros de eventos"
+            if has_complex_objects:
+                return "Documentos complejos"
+            return "Documentos estándar"
+        except Exception as e:
+            print(f"Error al detectar tipo de contenido: {e}")
+            return "Desconocido"
+
+    def get_field_description(self, field_name):
+        """Proporciona una descripción para campos comunes."""
+        field_lower = field_name.lower()
+
+        if field_name == "_id":
+            return "Identificador único del documento"
+        if "id" in field_lower or "uuid" in field_lower:
+            return "Identificador único"
+        if field_lower in ["name", "nombre"]:
+            return "Nombre"
+        if field_lower in ["email", "correo", "mail"]:
+            return "Correo electrónico"
+        if field_lower in ["phone", "telefono", "tel", "movil"]:
+            return "Número de teléfono"
+        if field_lower in ["address", "direccion"]:
+            return "Dirección postal"
+        if field_lower in ["password", "contrasena", "clave"]:
+            return "Contraseña (cifrada)"
+        if field_lower in ["role", "rol"]:
+            return "Rol o nivel de permisos"
+        if field_lower in ["location", "ubicacion", "coordinates", "coordenadas"]:
+            return "Datos de ubicación geográfica"
+        if "date" in field_lower or "fecha" in field_lower:
+            return "Fecha"
+        if "time" in field_lower or "hora" in field_lower:
+            return "Hora"
+        if field_lower in ["created_at", "fecha_creacion", "creation_date"]:
+            return "Fecha de creación"
+        if field_lower in ["updated_at", "fecha_actualizacion", "last_modified"]:
+            return "Fecha de última modificación"
+        if field_lower in ["price", "precio"]:
+            return "Precio"
+        if field_lower in ["cost", "costo"]:
+            return "Costo"
+        if field_lower in ["description", "descripcion"]:
+            return "Descripción"
+        if field_lower in ["category", "categoria"]:
+            return "Categoría"
+        if field_lower in ["stock", "inventory", "inventario"]:
+            return "Cantidad en inventario"
+        if field_lower in ["type", "tipo"]:
+            return "Tipo de documento"
+        if field_lower in ["status", "estado"]:
+            return "Estado"
+        if field_lower in ["tags", "etiquetas"]:
+            return "Etiquetas o categorías"
+        if field_lower in ["active", "activo"]:
+            return "Estado de activación"
+        if field_lower in ["comments", "comentarios"]:
+            return "Comentarios"
+        if field_lower in ["image", "imagen", "photo", "foto"]:
+            return "Ruta de imagen o datos binarios"
+        if field_lower.endswith("_id"):
+            related_entity = field_lower[:-3].replace("_", " ")
+            return f"Referencia a {related_entity}"
+        return "Campo de datos"

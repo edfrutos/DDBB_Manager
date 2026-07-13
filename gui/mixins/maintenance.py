@@ -7,8 +7,10 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QListWidget, QListWidgetItem,
     QCheckBox, QGroupBox, QTextEdit, QProgressDialog,
     QWidget, QTimeEdit, QComboBox, QMessageBox,
+    QDialogButtonBox, QTableWidget, QTableWidgetItem,
 )
 from PyQt6.QtCore import Qt, QTime
+from PyQt6.QtGui import QColor
 
 try:
     from bson.objectid import ObjectId
@@ -262,6 +264,70 @@ class MaintenanceMixin:
         except Exception as e:
             results_text.append(f"❌ Error durante mantenimiento: {str(e)}")
             QMessageBox.critical(dialog, "Error", f"Error durante operaciones de mantenimiento: {str(e)}")
+
+    def verify_integrity(self):
+        """Verificar la integridad de las colecciones de la base de datos."""
+        if self.db is None:
+            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
+            return
+
+        try:
+            collections = self.db.list_collection_names()
+
+            if not collections:
+                QMessageBox.information(self, "Información", "No hay colecciones para verificar")
+                return
+
+            progress = QProgressDialog("Verificando integridad de la base de datos...", "Cancelar", 0, len(collections), self)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.show()
+
+            results = []
+            for i, collection_name in enumerate(collections):
+                progress.setValue(i)
+                if progress.wasCanceled():
+                    break
+
+                validate_result = self.db.command("validate", collection_name)
+                is_valid = validate_result.get("valid", False)
+                results.append((collection_name, is_valid))
+
+            progress.setValue(len(collections))
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Resultados de Integridad de Base de Datos")
+            layout = QVBoxLayout(dialog)
+
+            table = QTableWidget()
+            table.setColumnCount(2)
+            table.setHorizontalHeaderLabels(["Colección", "Estado"])
+            table.setRowCount(len(results))
+
+            for i, (collection, valid) in enumerate(results):
+                table.setItem(i, 0, QTableWidgetItem(collection))
+                status_text = "Válida" if valid else "Inválida"
+                status_item = QTableWidgetItem(status_text)
+                status_item.setForeground(QColor("green" if valid else "red"))
+                table.setItem(i, 1, status_item)
+
+            table.resizeColumnsToContents()
+            layout.addWidget(table)
+
+            valid_count = sum(1 for _, valid in results if valid)
+            summary = QLabel(f"Resumen: {valid_count}/{len(results)} colecciones son válidas")
+            summary.setStyleSheet("font-weight: bold; margin-top: 10px;")
+            layout.addWidget(summary)
+
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            button_box.rejected.connect(dialog.reject)
+            layout.addWidget(button_box)
+
+            dialog.exec()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al verificar integridad de la base de datos: {str(e)}")
+            self.show_status_message(f"Error: {str(e)}", error=True)
 
     def schedule_maintenance_task(self, selected_collections, compact, repair_indexes,
                                   validate_docs, remove_duplicates, update_stats,

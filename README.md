@@ -112,6 +112,7 @@ core/
 - `IndexManagementMixin`
 - `HelpMixin`
 - `CollectionViewMixin`
+- `QueryMixin`
 
 `core/db_manager.py` sigue siendo una implementación independiente de referencia y todavía no es la capa de servicios de la GUI.
 
@@ -130,9 +131,11 @@ venv/bin/python -m py_compile \
 
 Actualmente el repositorio no contiene una suite de pruebas automatizadas. Los cambios de interfaz y operaciones MongoDB deben validarse también de forma manual contra una base de datos de prueba.
 
+Como apoyo mínimo, existe un smoke test en `tests/test_smoke_flows.py` que valida los flujos básicos de creación, consulta, integridad y borrado usando dobles de base de datos.
+
 ## Estado del proyecto
 
-La fase activa es una refactorización incremental de `gui/main_window.py`. Los dominios de mantenimiento, respaldo, usuarios, importación/exportación, bases de datos, índices, ayuda/tutorial y vistas de colecciones ya están separados en mixins. El siguiente bloque pendiente documentado es la lógica de metadatos y detección de contenido de colecciones que aún vive en `MainWindow`.
+La fase activa es una refactorización incremental de `gui/main_window.py`. Los dominios de mantenimiento, respaldo, usuarios, importación/exportación, bases de datos, índices, ayuda/tutorial, vistas de colecciones y consultas ya están separados en mixins. La lógica de metadatos, detección de contenido y descripción de campos de colecciones vive en `CollectionViewMixin`, los propietarios y la creación/borrado de colecciones ya están en `DatabaseManagementMixin`, y la validación de integridad vive en `MaintenanceMixin`. Lo que queda en `MainWindow` son principalmente helpers de ventana y pegamento de UI.
 
 ## Seguridad
 

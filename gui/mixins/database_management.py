@@ -24,11 +24,204 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from ..dialogs import CollectionSelectDialog
+from ..dialogs import CollectionSelectDialog, CreateCollectionDialog, DropCollectionDialog
 
 
 class DatabaseManagementMixin:
     """Métodos de gestión de bases de datos para MainWindow."""
+
+    def create_collection(self):
+        """Crear una nueva colección en la base de datos."""
+        if self.db is None:
+            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
+            return
+
+        dialog = CreateCollectionDialog(self)
+        if dialog.exec():
+            collection_name = dialog.name_input.text().strip()
+
+            if not collection_name:
+                QMessageBox.warning(self, "Advertencia", "El nombre de la colección no puede estar vacío")
+                return
+
+            try:
+                self.db.create_collection(collection_name)
+                self.show_collections()
+                self.update_database_stats()
+                self.show_status_message(f"Collection '{collection_name}' created successfully")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to create collection: {str(e)}")
+                self.show_status_message(f"Error: {str(e)}", error=True)
+
+    def drop_collection(self):
+        """Drop a collection from the database."""
+        if self.db is None:
+            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
+            return
+
+        try:
+            collections = self.db.list_collection_names()
+
+            if not collections:
+                QMessageBox.information(self, "Información", "No hay colecciones para eliminar")
+                return
+
+            dialog = DropCollectionDialog(self, collections)
+            if dialog.exec():
+                collection_name = dialog.get_selected_collection()
+
+                confirm = QMessageBox.question(
+                    self,
+                    "Confirmar Eliminación",
+                    f"¿Está seguro de que desea eliminar la colección '{collection_name}'?\n¡Esta acción no se puede deshacer!",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+
+                if confirm == QMessageBox.StandardButton.Yes:
+                    try:
+                        self.db.drop_collection(collection_name)
+                        self.show_collections()
+                        self.update_database_stats()
+                        self.show_status_message(f"Collection '{collection_name}' dropped successfully")
+                    except Exception as e:
+                        QMessageBox.critical(self, "Error", f"Failed to drop collection: {str(e)}")
+                        self.show_status_message(f"Error: {str(e)}", error=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to process collection drop: {str(e)}")
+
+    def show_collection_owners(self):
+        """Mostrar un diálogo con los propietarios de todas las colecciones de la base de datos actual."""
+        if self.db is None:
+            QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
+            return
+
+        try:
+            owners = self.get_all_collection_owners()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al obtener propietarios: {str(e)}")
+            return
+
+        if not owners:
+            QMessageBox.information(self, "Información", "No hay colecciones o no se pudo obtener información de propietarios")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Propietarios de Colecciones - {self.database_name}")
+        dialog.resize(700, 450)
+
+        layout = QVBoxLayout(dialog)
+
+        info_label = QLabel(f"Se encontraron {len(owners)} colecciones en '{self.database_name}'")
+        info_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-bottom: 8px;")
+        layout.addWidget(info_label)
+
+        table = QTableWidget()
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(["Colección", "Propietario", "Email", "Departamento", "Cargo"])
+        table.setRowCount(len(owners))
+        table.setAlternatingRowColors(True)
+        table.setSortingEnabled(True)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        for row, (collection_name, owner_info) in enumerate(sorted(owners.items())):
+            table.setItem(row, 0, QTableWidgetItem(collection_name))
+            table.setItem(row, 1, QTableWidgetItem(str(owner_info.get("nombre", "Desconocido"))))
+            table.setItem(row, 2, QTableWidgetItem(str(owner_info.get("email", "N/A"))))
+            table.setItem(row, 3, QTableWidgetItem(str(owner_info.get("departamento", "N/A"))))
+            table.setItem(row, 4, QTableWidgetItem(str(owner_info.get("cargo", "N/A"))))
+
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        close_button = QPushButton("Cerrar")
+        close_button.clicked.connect(dialog.accept)
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+    def get_all_collection_owners(self):
+        """Get owner information for all collections in the database."""
+        owners_cache = {}
+
+        try:
+            if not self.db:
+                return {}
+
+            collections = self.db.list_collection_names()
+            for collection_name in collections:
+                owners_cache[collection_name] = self.find_collection_owner(collection_name)
+
+            return owners_cache
+        except Exception as e:
+            print(f"Error getting all collection owners: {e}")
+            return {}
+
+    def find_collection_owner(self, collection_name):
+        """Encuentra el propietario de una colección buscando en metadatos y documentos."""
+        owner_info = {
+            "nombre": "Desconocido",
+            "email": "N/A",
+            "departamento": "N/A",
+            "cargo": "N/A",
+            "telefono": "N/A",
+        }
+
+        try:
+            collection = self.db[collection_name]
+
+            meta_doc = collection.find_one({"type": "metadata"}) or collection.find_one({"type": "collection_info"})
+            if meta_doc:
+                if "owner" in meta_doc:
+                    owner_info["nombre"] = meta_doc["owner"]
+                elif "creator" in meta_doc:
+                    owner_info["nombre"] = meta_doc["creator"]
+
+                owner_info["email"] = meta_doc.get("email", meta_doc.get("owner_email", "N/A"))
+                owner_info["departamento"] = meta_doc.get("department", meta_doc.get("owner_department", "N/A"))
+                owner_info["cargo"] = meta_doc.get("role", meta_doc.get("owner_role", "N/A"))
+                owner_info["telefono"] = meta_doc.get("phone", meta_doc.get("owner_phone", "N/A"))
+
+                if owner_info["nombre"] != "Desconocido":
+                    return owner_info
+
+            owner_doc = (
+                collection.find_one({"owner": {"$exists": True}})
+                or collection.find_one({"created_by": {"$exists": True}})
+                or collection.find_one({"creator": {"$exists": True}})
+            )
+
+            if owner_doc:
+                if "owner" in owner_doc:
+                    owner_val = owner_doc["owner"]
+                    if isinstance(owner_val, dict):
+                        owner_info["nombre"] = owner_val.get("name", str(owner_val))
+                        owner_info["email"] = owner_val.get("email", "N/A")
+                        owner_info["departamento"] = owner_val.get("department", "N/A")
+                        owner_info["cargo"] = owner_val.get("role", "N/A")
+                    else:
+                        owner_info["nombre"] = str(owner_val)
+                elif "created_by" in owner_doc:
+                    owner_info["nombre"] = str(owner_doc["created_by"])
+                elif "creator" in owner_doc:
+                    owner_info["nombre"] = str(owner_doc["creator"])
+
+                return owner_info
+
+            if "users" in self.db.list_collection_names():
+                owner_user = self.db["users"].find_one({"permissions.collections": collection_name, "permissions.role": "owner"})
+                if owner_user:
+                    owner_info["nombre"] = owner_user.get("name", owner_user.get("username", "Usuario"))
+                    owner_info["email"] = owner_user.get("email", "N/A")
+                    owner_info["departamento"] = owner_user.get("department", owner_user.get("departamento", "N/A"))
+                    owner_info["cargo"] = owner_user.get("role", owner_user.get("cargo", "N/A"))
+
+            return owner_info
+        except Exception as e:
+            print(f"Error al buscar propietario de la colección: {e}")
+            return owner_info
 
     def show_databases(self):
         """Mostrar todas las bases de datos disponibles"""
