@@ -3,6 +3,7 @@ import json
 import unittest
 import tempfile
 import hashlib
+import csv
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 from gui.main_window import MainWindow
 import gui.mixins.database_management as db_mixin
 import gui.mixins.backup as backup_mixin
+import gui.mixins.import_export as import_export_mixin
 import gui.mixins.maintenance as maintenance_mixin
 import gui.mixins.user_management as user_mixin
 
@@ -214,6 +216,36 @@ class FakeButton:
 
     def setEnabled(self, value):
         self.enabled = value
+
+
+class FakeImportDialog:
+    def __init__(self, parent, collections, target_collection="target", clear=False):
+        self.target_collection = target_collection
+        self.clear = clear
+
+    def exec(self):
+        return True
+
+    def get_target_collection(self):
+        return self.target_collection
+
+    def should_clear_collection(self):
+        return self.clear
+
+
+class FakeExportDialog:
+    def __init__(self, parent, collections, collection_name="source", export_format="json"):
+        self.collection_name = collection_name
+        self.export_format = export_format
+
+    def exec(self):
+        return True
+
+    def get_selected_collection(self):
+        return self.collection_name
+
+    def get_export_format(self):
+        return self.export_format
 
 
 class FakeProgressDialog:
@@ -458,6 +490,67 @@ class SmokeFlowsTest(unittest.TestCase):
         stored = self.window.db["users_unified"].find_one({"_id": user_id})
         self.assertEqual(stored["password"], hashlib.sha256("supersecret".encode()).hexdigest())
         self.assertIn("password_changed_at", stored)
+
+    def test_import_export_json_round_trip(self):
+        source = self.window.db.create_collection("source")
+        source.insert_one({"_id": "1", "name": "uno"})
+        source.insert_one({"_id": "2", "name": "dos"})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            export_path = Path(tmpdir, "source.json")
+            import_path = Path(tmpdir, "import.json")
+            import_path.write_text(json.dumps([
+                {"_id": "10", "name": "diez"},
+                {"_id": "11", "name": "once"},
+            ]), encoding="utf-8")
+
+            with patch.object(import_export_mixin, "ExportDialog", lambda parent, collections: FakeExportDialog(parent, collections, "source", "json")), \
+                 patch.object(import_export_mixin, "ImportDialog", lambda parent, collections: FakeImportDialog(parent, collections, "target", True)), \
+                 patch.object(import_export_mixin.QFileDialog, "getSaveFileName", return_value=(str(export_path), "JSON Files (*.json)")), \
+                 patch.object(import_export_mixin.QFileDialog, "getOpenFileName", return_value=(str(import_path), "JSON Files (*.json)")), \
+                 patch.object(import_export_mixin.QMessageBox, "information", return_value=None), \
+                 patch.object(import_export_mixin.QMessageBox, "warning", return_value=None), \
+                 patch.object(import_export_mixin.QMessageBox, "critical", return_value=None):
+
+                self.window.export_data()
+                self.assertTrue(export_path.exists())
+                exported = json.loads(export_path.read_text(encoding="utf-8"))
+                self.assertEqual(len(exported), 2)
+                self.assertEqual(exported[0]["name"], "uno")
+
+                self.window.import_data()
+                self.assertEqual(self.window.db["target"].count_documents({}), 2)
+                self.assertEqual(self.window.db["target"].find_one({"_id": "10"})["name"], "diez")
+
+    def test_import_export_csv_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir, "people.csv")
+            with csv_path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["_id", "name", "role"])
+                writer.writeheader()
+                writer.writerow({"_id": "1", "name": "Ada", "role": "admin"})
+                writer.writerow({"_id": "2", "name": "Grace", "role": "user"})
+
+            export_path = Path(tmpdir, "people_export.csv")
+
+            with patch.object(import_export_mixin, "ImportDialog", lambda parent, collections: FakeImportDialog(parent, collections, "people", True)), \
+                 patch.object(import_export_mixin, "ExportDialog", lambda parent, collections: FakeExportDialog(parent, collections, "people", "csv")), \
+                 patch.object(import_export_mixin.QFileDialog, "getOpenFileName", return_value=(str(csv_path), "CSV Files (*.csv)")), \
+                 patch.object(import_export_mixin.QFileDialog, "getSaveFileName", return_value=(str(export_path), "CSV Files (*.csv)")), \
+                 patch.object(import_export_mixin.QMessageBox, "information", return_value=None), \
+                 patch.object(import_export_mixin.QMessageBox, "warning", return_value=None), \
+                 patch.object(import_export_mixin.QMessageBox, "critical", return_value=None):
+
+                self.window.import_data()
+                self.assertEqual(self.window.db["people"].count_documents({}), 2)
+                self.assertEqual(self.window.db["people"].find_one({"_id": "1"})["name"], "Ada")
+
+                self.window.export_data()
+                self.assertTrue(export_path.exists())
+                with export_path.open("r", encoding="utf-8") as f:
+                    exported_rows = list(csv.DictReader(f))
+                self.assertEqual(len(exported_rows), 2)
+                self.assertEqual(exported_rows[0]["name"], "Ada")
 
 
 if __name__ == "__main__":
