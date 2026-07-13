@@ -153,11 +153,13 @@ class FakeDB:
     def drop_collection(self, name):
         self._collections.pop(name, None)
 
-    def command(self, cmd, collection_name):
+    def command(self, cmd, collection_name=None):
         if cmd == "validate":
             return {"valid": True}
         if cmd == "collStats":
             return {"size": 1024, "avgObjSize": 128, "totalIndexSize": 0}
+        if cmd == "dbStats":
+            return {"dataSize": 2 * 1024 * 1024}
         raise ValueError(cmd)
 
     def __getitem__(self, name):
@@ -350,6 +352,48 @@ class FakeDialog:
 
     def reject(self):
         self.accepted = False
+
+
+class FakeVBoxLayout:
+    def __init__(self, *_args, **_kwargs):
+        self.widgets = []
+
+    def addWidget(self, widget, *_args, **_kwargs):
+        self.widgets.append(widget)
+
+    def addLayout(self, layout, *_args, **_kwargs):
+        self.widgets.append(layout)
+
+
+class FakeTableItem:
+    def __init__(self, text):
+        self._text = text
+
+    def text(self):
+        return self._text
+
+
+class FakeStatsTable:
+    def __init__(self):
+        self.columns = 0
+        self.headers = []
+        self.rows = 0
+        self.items = {}
+
+    def setColumnCount(self, count):
+        self.columns = count
+
+    def setHorizontalHeaderLabels(self, labels):
+        self.headers = list(labels)
+
+    def setRowCount(self, count):
+        self.rows = count
+
+    def setItem(self, row, column, item):
+        self.items[(row, column)] = item.text()
+
+    def resizeColumnsToContents(self):
+        pass
 
 
 class SmokeFlowsTest(unittest.TestCase):
@@ -757,6 +801,57 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(owners["archive"]["nombre"], "User Owner")
         self.assertEqual(self.window.find_collection_owner("orders")["cargo"], "Owner")
         self.assertEqual(self.window.find_collection_owner("archive")["email"], "owner@example.com")
+
+    def test_show_global_stats(self):
+        self.window.client = FakeClient({"sales": FakeDB(), "ops": FakeDB(), "admin": FakeDB()})
+        self.window.client._databases["sales"].create_collection("orders")
+        self.window.client._databases["ops"].create_collection("logs")
+        self.window.client._databases["sales"]._collections["orders"].insert_one({"_id": 1})
+        self.window.client._databases["ops"]._collections["logs"].insert_one({"_id": 1})
+
+        captured = {"title": None, "labels": []}
+
+        class StatsDialog:
+            def __init__(self, *_args, **_kwargs):
+                self.accepted = False
+
+            def setWindowTitle(self, value):
+                captured["title"] = value
+
+            def resize(self, *_args):
+                pass
+
+            def exec(self):
+                self.accepted = True
+
+            def reject(self):
+                self.accepted = False
+
+        class StatsLabel:
+            def __init__(self, text=""):
+                self.text_value = text
+
+            def setStyleSheet(self, *_args):
+                pass
+
+        class StatsButtonBox:
+            StandardButton = SimpleNamespace(Close=1)
+
+            def __init__(self, *_args, **_kwargs):
+                self.rejected = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+        with patch.object(db_mixin, "QDialog", StatsDialog), \
+             patch.object(db_mixin, "QVBoxLayout", FakeVBoxLayout), \
+             patch.object(db_mixin, "QLabel", StatsLabel), \
+             patch.object(db_mixin, "QTableWidget", FakeStatsTable), \
+             patch.object(db_mixin, "QTableWidgetItem", FakeTableItem), \
+             patch.object(db_mixin, "QDialogButtonBox", StatsButtonBox), \
+             patch.object(db_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(db_mixin.QMessageBox, "critical", return_value=None):
+
+            self.window.show_global_stats()
+
+        self.assertEqual(captured["title"], "Estadísticas Globales de MongoDB")
 
 
 if __name__ == "__main__":
