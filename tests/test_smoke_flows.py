@@ -11,7 +11,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from bson.objectid import ObjectId
-from PyQt6.QtGui import QStandardItemModel
+from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 
 from gui.main_window import MainWindow
@@ -308,9 +308,22 @@ class FakeTable:
     def __init__(self):
         self.rows = 0
         self.items = {}
+        self.columns = 0
+        self.headers = []
+        self.inserted_rows = []
 
     def setRowCount(self, count):
         self.rows = count
+
+    def setColumnCount(self, count):
+        self.columns = count
+
+    def setHorizontalHeaderLabels(self, labels):
+        self.headers = list(labels)
+
+    def insertRow(self, row):
+        self.inserted_rows.append(row)
+        self.rows += 1
 
     def setItem(self, row, column, item):
         self.items[(row, column)] = item.text()
@@ -321,6 +334,12 @@ class FakeTable:
     def clear(self):
         self.rows = 0
         self.items = {}
+        self.columns = 0
+        self.headers = []
+        self.inserted_rows = []
+
+    def parent(self):
+        return None
 
 
 class FakeTree:
@@ -329,6 +348,14 @@ class FakeTree:
 
     def expandToDepth(self, depth):
         self.depths.append(depth)
+
+
+class FakeTabsWidget:
+    def __init__(self):
+        self.current_index = None
+
+    def setCurrentIndex(self, index):
+        self.current_index = index
 
 
 class FakeProgressDialog:
@@ -853,6 +880,34 @@ class SmokeFlowsTest(unittest.TestCase):
         self.window.show_collections()
         root = self.window.collections_model.invisibleRootItem()
         self.assertEqual(root.rowCount(), 2)
+
+    def test_view_collection_data_loads_selected_collection(self):
+        self.window.db.create_collection("alpha")
+        self.window.db["alpha"].insert_one({"name": "uno", "price": 10})
+        self.window.collections_model = QStandardItemModel()
+        self.window.collections_tree = FakeTree()
+        self.window.current_collection = None
+        self.window.data_table = FakeTable()
+        self.window.collection_view_tabs = FakeTabsWidget()
+        messages = []
+        self.window.show_status_message = lambda message, error=False: messages.append((message, error))
+        self.window.load_collection_metadata = lambda collection_name: messages.append(("metadata", collection_name))
+
+        item = self.window.collections_model.invisibleRootItem()
+        item.appendRow(QStandardItem("alpha (1)"))
+        index = self.window.collections_model.index(0, 0)
+
+        self.window.view_collection_data(index)
+
+        self.assertEqual(self.window.current_collection, "alpha")
+        self.assertEqual(self.window.data_table.rows, 1)
+        self.assertEqual(self.window.data_table.columns, 3)
+        self.assertEqual(self.window.data_table.headers[0], "_id")
+        self.assertEqual(self.window.data_table.headers[1], "name")
+        self.assertEqual(self.window.data_table.headers[2], "price")
+        self.assertEqual(self.window.collection_view_tabs.current_index, 0)
+        self.assertIn(("Mostrando datos de alpha", False), messages)
+        self.assertIn(("metadata", "alpha"), messages)
 
     def test_collection_owner_discovery(self):
         self.window.db.create_collection("orders")
