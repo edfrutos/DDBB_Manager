@@ -89,6 +89,41 @@ class FakeDB:
         return self._collections.setdefault(name, FakeCollection(name))
 
 
+class FakeClient:
+    def __init__(self, databases):
+        self._databases = databases
+        self.admin = SimpleNamespace(command=lambda _cmd: {"version": "8.0", "uptime": 86400, "connections": {"current": 1, "available": 99}})
+
+    def list_database_names(self):
+        return list(self._databases.keys())
+
+    def __getitem__(self, name):
+        return self._databases[name]
+
+
+class FakeLabel:
+    def __init__(self):
+        self.text_value = ""
+
+    def setText(self, value):
+        self.text_value = value
+
+
+class FakeTabs:
+    def __init__(self):
+        self.enabled = {1: False}
+        self.current_index = None
+
+    def isTabEnabled(self, index):
+        return self.enabled.get(index, False)
+
+    def setTabEnabled(self, index, enabled):
+        self.enabled[index] = enabled
+
+    def setCurrentIndex(self, index):
+        self.current_index = index
+
+
 class SmokeFlowsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -151,6 +186,30 @@ class SmokeFlowsTest(unittest.TestCase):
             self.window.verify_integrity()
             self.window.drop_collection()
             self.assertNotIn(created_name, self.window.db.list_collection_names())
+
+    def test_switch_database_updates_state(self):
+        primary_db = FakeDB()
+        secondary_db = FakeDB()
+        client = FakeClient({"codex_smoke": primary_db, "codex_target": secondary_db, "admin": FakeDB()})
+
+        self.window.client = client
+        self.window.db = primary_db
+        self.window.database_name = "codex_smoke"
+        self.window.connection_status_label = FakeLabel()
+        self.window.tab_widget = FakeTabs()
+        self.window.show_collections = lambda: None
+        self.window.update_database_stats = lambda: None
+        messages = []
+        self.window.show_status_message = lambda message, error=False: messages.append((message, error))
+
+        self.window.switch_to_database("codex_target")
+
+        self.assertEqual(self.window.database_name, "codex_target")
+        self.assertIs(self.window.db, secondary_db)
+        self.assertEqual(self.window.connection_status_label.text_value, "Conectado a: codex_target")
+        self.assertTrue(self.window.tab_widget.isTabEnabled(1))
+        self.assertEqual(self.window.tab_widget.current_index, 1)
+        self.assertIn(("Cambiado a la base de datos: codex_target", False), messages)
 
 
 if __name__ == "__main__":
