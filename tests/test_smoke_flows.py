@@ -11,6 +11,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from bson.objectid import ObjectId
+from PyQt6.QtGui import QStandardItemModel
 from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 
 from gui.main_window import MainWindow
@@ -320,6 +321,14 @@ class FakeTable:
     def clear(self):
         self.rows = 0
         self.items = {}
+
+
+class FakeTree:
+    def __init__(self):
+        self.depths = []
+
+    def expandToDepth(self, depth):
+        self.depths.append(depth)
 
 
 class FakeProgressDialog:
@@ -798,6 +807,52 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.meta_access_table.items[(0, 0)], "bob")
         self.assertEqual(self.window.meta_access_table.items[(0, 1)], "Edición")
         self.assertEqual(self.window.meta_access_table.items[(2, 0)], "ana")
+
+    def test_show_collections_supports_view_modes(self):
+        self.window.db.create_collection("alpha")
+        self.window.db["alpha"].insert_one({"name": "uno"})
+        self.window.db.create_collection("beta")
+        self.window.db["beta"].insert_one({"name": "dos"})
+
+        self.window.collections_model = QStandardItemModel()
+        self.window.collections_tree = FakeTree()
+        self.window._model_items = []
+        self.window._db_items = {}
+        self.window._collections_refs = {}
+        self.window.show_collections = MainWindow.show_collections.__get__(self.window, MainWindow)
+        self.window.is_tree_view_valid = lambda: True
+        self.window.ensure_tree_view_exists = lambda: True
+        self.window.find_collection_owner = lambda collection_name: {
+            "alpha": {"nombre": "Equipo A"},
+            "beta": {"nombre": "Equipo B"},
+        }.get(collection_name, {"nombre": "Desconocido"})
+        self.window.detect_collection_content_type = lambda collection_name: {
+            "alpha": "Datos de usuarios",
+            "beta": "Catálogo de productos",
+        }.get(collection_name, "Documentos estándar")
+
+        self.window.view_mode = 0
+        self.window.show_collections()
+        root = self.window.collections_model.invisibleRootItem()
+        self.assertEqual(root.rowCount(), 1)
+        self.assertEqual(root.child(0).rowCount(), 2)
+        self.assertTrue(self.window.collections_tree.depths)
+
+        self.window.view_mode = 1
+        self.window.show_collections()
+        root = self.window.collections_model.invisibleRootItem()
+        self.assertEqual(root.rowCount(), 2)
+        self.assertEqual(root.child(0).text(), "Equipo A (1)")
+
+        self.window.view_mode = 2
+        self.window.show_collections()
+        root = self.window.collections_model.invisibleRootItem()
+        self.assertEqual(root.rowCount(), 2)
+
+        self.window.view_mode = 3
+        self.window.show_collections()
+        root = self.window.collections_model.invisibleRootItem()
+        self.assertEqual(root.rowCount(), 2)
 
     def test_collection_owner_discovery(self):
         self.window.db.create_collection("orders")
