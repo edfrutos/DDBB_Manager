@@ -842,6 +842,18 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.meta_access_table.items[(0, 1)], "Consulta")
         self.assertEqual(self.window.meta_access_table.items[(2, 0)], "Equipo Datos")
 
+    def test_show_collections_populates_real_tree_widget(self):
+        self.window.db.create_collection("alpha")
+        self.window.db["alpha"].insert_one({"name": "uno"})
+        self.window.show_collections = MainWindow.show_collections.__get__(self.window, MainWindow)
+
+        self.window.show_collections()
+
+        root = self.window.collections_model.invisibleRootItem()
+        self.assertEqual(root.rowCount(), 1)
+        self.assertEqual(root.child(0).text(), self.window.database_name)
+        self.assertEqual(root.child(0).rowCount(), 1)
+
     def test_collection_access_history_uses_audit_log(self):
         self.window.db.create_collection("audit_log")
         self.window.db["audit_log"].insert_many([

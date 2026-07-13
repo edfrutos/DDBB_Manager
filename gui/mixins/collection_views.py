@@ -219,39 +219,31 @@ class CollectionViewMixin:
             return False
 
         try:
-            if not self.collections_tree or sip.isdeleted(self.collections_tree):
+            if self.collections_tree is None or sip.isdeleted(self.collections_tree):
                 return False
-            if not self.collections_model or sip.isdeleted(self.collections_model):
+            if self.collections_model is None or sip.isdeleted(self.collections_model):
                 return False
-            if self._tree_destroyed or not self.collections_tree.isVisible():
+            if self._tree_destroyed:
                 return False
-            if not self.collections_model.rowCount():
+            if self.collections_tree.parent() is None:
                 return False
-            if not self.collections_tree.parent():
-                return False
-            if not hasattr(self, "_tree_layout") or not self._tree_layout:
+            if not hasattr(self, "_tree_layout") or self._tree_layout is None:
                 return False
             if self._tree_layout.indexOf(self.collections_tree) == -1:
                 return False
-            if not self.collections_tree.window():
+            if self.collections_tree.window() is None:
                 return False
-            if not self.collections_tree.signalsBlocked():
+            if self.collections_tree.model() is None:
                 return False
-            if not self.collections_tree.model():
+            if self.collections_tree.selectionModel() is None:
                 return False
-            if not self.collections_tree.topLevelItemCount():
+            if self.collections_tree.header() is None:
                 return False
-            if not self.collections_tree.selectionModel():
+            if self.collections_tree.viewport() is None:
                 return False
-            if not self.collections_tree.header():
+            if self.collections_tree.horizontalScrollBar() is None or self.collections_tree.verticalScrollBar() is None:
                 return False
-            if not self.collections_tree.invisibleRootItem():
-                return False
-            if not self.collections_tree.viewport():
-                return False
-            if not self.collections_tree.horizontalScrollBar() or not self.collections_tree.verticalScrollBar():
-                return False
-            if not self.collections_tree.itemDelegate():
+            if self.collections_tree.itemDelegate() is None:
                 return False
             return True
         except Exception:
