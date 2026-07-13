@@ -94,6 +94,25 @@ class FakeCollection:
         for key, value in query.items():
             if key == "$or":
                 return any(self._matches(document, item) for item in value)
+            if "." in key:
+                current = document
+                for part in key.split("."):
+                    if isinstance(current, dict) and part in current:
+                        current = current[part]
+                    else:
+                        current = None
+                        break
+                if isinstance(value, dict):
+                    if "$exists" in value:
+                        if bool(value["$exists"]) != (current is not None):
+                            return False
+                        continue
+                    if current != value:
+                        return False
+                else:
+                    if current != value:
+                        return False
+                continue
             if isinstance(value, dict):
                 if "$exists" in value:
                     if bool(value["$exists"]) != (key in document):
@@ -701,6 +720,43 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.meta_owner_department.text_value, "IT")
         self.assertEqual(self.window.meta_owner_role.text_value, "Owner")
         self.assertEqual(self.window.meta_fields_table.rows, 4)
+
+    def test_collection_owner_discovery(self):
+        self.window.db.create_collection("orders")
+        self.window.db["orders"].insert_one({
+            "type": "metadata",
+            "owner": "Equipo Ventas",
+            "email": "ventas@example.com",
+            "department": "Sales",
+            "role": "Owner",
+            "phone": "555-0101",
+        })
+        self.window.db.create_collection("invoices")
+        self.window.db["invoices"].insert_one({
+            "created_by": "Equipo Finanzas",
+            "email": "finanzas@example.com",
+            "department": "Finance",
+            "role": "Admin",
+        })
+        self.window.db.create_collection("users")
+        self.window.db["users"].insert_one({
+            "name": "User Owner",
+            "email": "owner@example.com",
+            "department": "IT",
+            "role": "owner",
+            "permissions": {"collections": "archive", "role": "owner"},
+        })
+        self.window.db.create_collection("archive")
+        self.window.db["archive"].insert_one({"name": "doc"})
+
+        owners = self.window.get_all_collection_owners()
+
+        self.assertEqual(owners["orders"]["nombre"], "Equipo Ventas")
+        self.assertEqual(owners["orders"]["email"], "ventas@example.com")
+        self.assertEqual(owners["invoices"]["nombre"], "Equipo Finanzas")
+        self.assertEqual(owners["archive"]["nombre"], "User Owner")
+        self.assertEqual(self.window.find_collection_owner("orders")["cargo"], "Owner")
+        self.assertEqual(self.window.find_collection_owner("archive")["email"], "owner@example.com")
 
 
 if __name__ == "__main__":
