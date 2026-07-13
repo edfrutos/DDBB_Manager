@@ -846,6 +846,7 @@ class SmokeFlowsTest(unittest.TestCase):
         self.window.db.create_collection("alpha")
         self.window.db["alpha"].insert_one({"name": "uno"})
         self.window.show_collections = MainWindow.show_collections.__get__(self.window, MainWindow)
+        self.window.load_collection_metadata = lambda collection_name: None
 
         self.window.show_collections()
 
@@ -853,6 +854,14 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(root.rowCount(), 1)
         self.assertEqual(root.child(0).text(), self.window.database_name)
         self.assertEqual(root.child(0).rowCount(), 1)
+
+        collection_index = root.child(0).child(0).index()
+        self.window.collections_tree.clicked.emit(collection_index)
+
+        self.assertEqual(self.window.current_collection, "alpha")
+        self.assertEqual(self.window.data_table.rowCount(), 1)
+        self.assertEqual(self.window.data_table.columnCount(), 2)
+        self.assertEqual(self.window.data_table.horizontalHeaderItem(1).text(), "name")
 
     def test_collection_access_history_uses_audit_log(self):
         self.window.db.create_collection("audit_log")

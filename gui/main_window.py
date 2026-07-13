@@ -388,6 +388,7 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
         # Connect signals right after creation to ensure widget isn't deleted
         try:
             if hasattr(self, 'collections_tree') and self.collections_tree and not sip.isdeleted(self.collections_tree):
+                self.collections_tree.clicked.connect(self.view_collection_data)
                 self.collections_tree.doubleClicked.connect(self.view_collection_data)
                 print("Collections tree signals connected during initial setup")
             else:

@@ -310,6 +310,7 @@ class CollectionViewMixin:
             self.collections_tree.setObjectName("collectionsTreeView")
             self.collections_tree.setModel(self.collections_model)
             tree_layout.addWidget(self.collections_tree)
+            self.collections_tree.clicked.connect(self.view_collection_data)
             self.collections_tree.doubleClicked.connect(self.view_collection_data)
             self._tree_destroyed = False
             return True
