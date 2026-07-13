@@ -11,7 +11,7 @@ import os
 from dotenv import load_dotenv
 import traceback
 from PyQt6.QtWidgets import QApplication, QStyleFactory, QMessageBox
-from PyQt6.QtCore import Qt, QCoreApplication
+from PyQt6.QtCore import Qt, QCoreApplication, QTimer
 from PyQt6.QtGui import QPalette, QColor
 
 from gui.main_window import MainWindow
@@ -211,6 +211,31 @@ def limpiar_recursos(client=None):
         import traceback
         traceback.print_exc()
 
+def build_application(argv=None):
+    """Create and configure the QApplication used by the GUI."""
+    app = QApplication.instance() or QApplication(argv or sys.argv)
+    app.setApplicationName("Gestor de Base de Datos MongoDB")
+    app.setApplicationVersion("1.0.0")
+    return app
+
+def schedule_autoconnect(main_window, mongodb_uri, delay_ms=1000, timer_fn=QTimer.singleShot):
+    """Schedule the first connection attempt if a URI is available."""
+    if not mongodb_uri:
+        return False
+
+    print("Cadena de conexión encontrada, programando conexión automática")
+
+    def conexion_retrasada():
+        try:
+            main_window.initialize_connection()
+        except Exception as e:
+            print(f"Error durante la conexión inicial: {e}")
+            traceback.print_exc()
+
+    timer_fn(delay_ms, conexion_retrasada)
+    print(f"Temporizador de conexión programado con retraso de {delay_ms}ms")
+    return True
+
 def main():
     """Punto de entrada principal de la aplicación."""
     # En PyQt6, el escalado para pantallas de alta resolución se maneja automáticamente
@@ -231,9 +256,7 @@ def main():
     
     # Crear la aplicación
     print("Creando aplicación PyQt")
-    app = QApplication(sys.argv)
-    app.setApplicationName("Gestor de Base de Datos MongoDB")
-    app.setApplicationVersion("1.0.0")
+    app = build_application(sys.argv)
     
     # Mostrar estilos disponibles para depuración
     print("Estilos disponibles:", QStyleFactory.keys())
@@ -257,22 +280,7 @@ def main():
     main_window.raise_()
     
     # Intentar conectar a la base de datos si hay una cadena de conexión disponible
-    if mongodb_uri:
-        print("Cadena de conexión encontrada, programando conexión automática")
-        
-        # Programar intento de conexión con un retraso mayor
-        def conexion_retrasada():
-            try:
-                main_window.initialize_connection()
-            except Exception as e:
-                print(f"Error durante la conexión inicial: {e}")
-                traceback.print_exc()
-                
-        # Usar un retraso mayor para asegurar que la UI está completamente inicializada
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(1000, conexion_retrasada)
-        print("Temporizador de conexión programado con retraso de 1000ms")
-    else:
+    if not schedule_autoconnect(main_window, mongodb_uri):
         print("No hay cadena de conexión disponible, omitiendo conexión automática")
         main_window.statusBar().showMessage("No hay cadena de conexión disponible. Use Conexión > Conectar para conectarse manualmente.")
     print("Starting application event loop")

@@ -83,6 +83,8 @@ Si la integración no está activada, la aplicación sigue funcionando con norma
 
 La aplicación carga un estilo claro, muestra la ventana principal y, cuando existe `MONGODB_URI`, programa el intento de conexión automática después de iniciar la interfaz.
 
+El arranque está encapsulado en helpers testeables en `main_gui.py` (`build_application()` y `schedule_autoconnect()`).
+
 El mapa compacto de flujos está en [`docs/flow_decalogo.md`](docs/flow_decalogo.md).
 
 ## Uso habitual
