@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from bson.objectid import ObjectId
 from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 
 from gui.main_window import MainWindow
@@ -216,6 +217,31 @@ class FakeButton:
 
     def setEnabled(self, value):
         self.enabled = value
+
+
+class FakeLineEdit:
+    def __init__(self, value=""):
+        self._value = value
+
+    def text(self):
+        return self._value
+
+
+class FakeComboBox:
+    def __init__(self):
+        self._items = []
+        self._current = ""
+
+    def addItems(self, items):
+        self._items.extend(items)
+        if not self._current and items:
+            self._current = items[0]
+
+    def setCurrentText(self, value):
+        self._current = value
+
+    def currentText(self):
+        return self._current
 
 
 class FakeImportDialog:
@@ -551,6 +577,41 @@ class SmokeFlowsTest(unittest.TestCase):
                     exported_rows = list(csv.DictReader(f))
                 self.assertEqual(len(exported_rows), 2)
                 self.assertEqual(exported_rows[0]["name"], "Ada")
+
+    def test_edit_and_delete_user_flow(self):
+        user_id = ObjectId("507f1f77bcf86cd799439011")
+        self.window.db.create_collection("users_unified")
+        self.window.db["users_unified"].insert_one({
+            "_id": user_id,
+            "nombre": "Ada Lovelace",
+            "email": "ada@example.com",
+            "role": "admin",
+        })
+
+        edit_result = {}
+
+        with patch.object(user_mixin, "QLineEdit", FakeLineEdit), \
+             patch.object(user_mixin, "QComboBox", FakeComboBox), \
+             patch.object(user_mixin.QDialog, "exec", return_value=QDialog.DialogCode.Accepted), \
+             patch.object(user_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "critical", return_value=None):
+
+            self.window.edit_user(user_id, "users_unified")
+            edit_result = self.window.db["users_unified"].find_one({"_id": user_id})
+
+        self.assertEqual(edit_result["nombre"], "Ada Lovelace")
+        self.assertEqual(edit_result["email"], "ada@example.com")
+        self.assertEqual(edit_result["role"], "admin")
+
+        with patch.object(user_mixin.QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+             patch.object(user_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "critical", return_value=None):
+
+            self.window.delete_user(user_id, "users_unified")
+
+        self.assertIsNone(self.window.db["users_unified"].find_one({"_id": user_id}))
 
 
 if __name__ == "__main__":
