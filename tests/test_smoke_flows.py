@@ -873,6 +873,18 @@ class SmokeFlowsTest(unittest.TestCase):
 
         self.assertEqual(notices, [])
 
+    def test_maintain_collections_without_collections_shows_notice(self):
+        self.window.db = FakeDB()
+        notices = []
+        self.window.show_status_message = lambda message, error=False: notices.append((message, error))
+
+        with patch.object(maintenance_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(maintenance_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(maintenance_mixin.QMessageBox, "critical", return_value=None):
+            self.window.maintain_collections()
+
+        self.assertEqual(notices, [])
+
     def test_show_collections_supports_view_modes(self):
         self.window.db.create_collection("alpha")
         self.window.db["alpha"].insert_one({"name": "uno"})
