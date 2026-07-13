@@ -62,6 +62,7 @@ Clase `DatabaseManager` con lógica de negocio: `connect`, `set_database`, CRUD,
 - `MainWindow` sigue siendo el coordinador de UI y conexión, pero parte de los dominios de mantenimiento, respaldo, usuarios, import/export, bases de datos e índices ya vive fuera del archivo principal.
 - Lo que queda en `MainWindow` son principalmente helpers de ventana, inicialización de UI y cierre. No fuerces más mixins si no se gana claridad real.
 - `core/db_manager.py` continúa siendo referencia/CLI independiente; no modificarlo para cambios de GUI salvo que se planifique explícitamente la integración de capas.
+- El orden de trabajo operativo vive en `docs/flow_decalogo.md`. Seguir ese mapa cuando haya que priorizar pruebas o nuevas mejoras.
 
 ## Comandos habituales
 
