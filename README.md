@@ -131,7 +131,7 @@ venv/bin/python -m py_compile \
 
 Actualmente el repositorio no contiene una suite de pruebas automatizadas. Los cambios de interfaz y operaciones MongoDB deben validarse también de forma manual contra una base de datos de prueba.
 
-Como apoyo mínimo, existe un smoke test en `tests/test_smoke_flows.py` que valida los flujos básicos de creación, consulta, cambio de base de datos, backup, restore, gestión de contraseñas, edición/borrado de usuarios, importación/exportación, integridad y borrado usando dobles de base de datos.
+Como apoyo mínimo, existe un smoke test en `tests/test_smoke_flows.py` que valida los flujos básicos de creación, consulta, cambio de base de datos, backup, restore, gestión de contraseñas, edición/borrado de usuarios, importación/exportación, vistas de colección y metadatos, integridad y borrado usando dobles de base de datos.
 
 ## Estado del proyecto
 

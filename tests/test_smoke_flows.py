@@ -17,6 +17,7 @@ from gui.main_window import MainWindow
 import gui.mixins.database_management as db_mixin
 import gui.mixins.backup as backup_mixin
 import gui.mixins.import_export as import_export_mixin
+import gui.mixins.collection_views as collection_views_mixin
 import gui.mixins.maintenance as maintenance_mixin
 import gui.mixins.user_management as user_mixin
 
@@ -272,6 +273,21 @@ class FakeExportDialog:
 
     def get_export_format(self):
         return self.export_format
+
+
+class FakeTable:
+    def __init__(self):
+        self.rows = 0
+        self.items = {}
+
+    def setRowCount(self, count):
+        self.rows = count
+
+    def setItem(self, row, column, item):
+        self.items[(row, column)] = item.text()
+
+    def resizeColumnsToContents(self):
+        pass
 
 
 class FakeProgressDialog:
@@ -612,6 +628,79 @@ class SmokeFlowsTest(unittest.TestCase):
             self.window.delete_user(user_id, "users_unified")
 
         self.assertIsNone(self.window.db["users_unified"].find_one({"_id": user_id}))
+
+    def test_collection_view_metadata_and_classification(self):
+        self.window.db.create_collection("products")
+        self.window.db["products"].insert_one({"name": "Monitor", "price": 120, "category": "display"})
+        self.window.db.create_collection("logs")
+        self.window.db["logs"].insert_one({"event": "login", "message": "ok"})
+        self.window.db.create_collection("users")
+        self.window.db["users"].insert_one({
+            "name": "Ada",
+            "email": "ada@example.com",
+            "phone": "123",
+            "address": "Street 1",
+        })
+        self.window.db["users"].insert_one({
+            "name": "Grace",
+            "email": "grace@example.com",
+            "role": "admin",
+        })
+        self.window.db.create_collection("geo")
+        self.window.db["geo"].insert_one({"location": {"type": "Point", "coordinates": [1, 2]}})
+        self.window.db.create_collection("excel")
+        self.window.db["excel"].insert_one({
+            "sheet_name": "Sheet1",
+            "row": 1,
+            "col": 1,
+            "header": "A",
+            "value": "x",
+            "format": "text",
+        })
+
+        self.assertEqual(self.window.get_field_description("_id"), "Identificador único del documento")
+        self.assertEqual(self.window.get_field_description("correo"), "Correo electrónico")
+        self.assertEqual(self.window.get_field_description("fecha_actualizacion"), "Fecha")
+        self.assertEqual(self.window.get_field_description("customer_id"), "Identificador único")
+
+        self.assertEqual(self.window.detect_collection_content_type("products"), "Tabla de datos")
+        self.assertEqual(self.window.detect_collection_content_type("logs"), "Tabla de datos")
+        self.assertEqual(self.window.detect_collection_content_type("users"), "Datos de usuarios")
+        self.assertEqual(self.window.detect_collection_content_type("geo"), "Datos geoespaciales")
+        self.assertEqual(self.window.detect_collection_content_type("excel"), "Datos de Excel")
+
+        self.window.meta_collection_name = FakeLabel()
+        self.window.meta_document_count = FakeLabel()
+        self.window.meta_size = FakeLabel()
+        self.window.meta_avg_doc_size = FakeLabel()
+        self.window.meta_indexes = FakeLabel()
+        self.window.meta_index_size = FakeLabel()
+        self.window.meta_content_type = FakeLabel()
+        self.window.meta_owner_name = FakeLabel()
+        self.window.meta_owner_email = FakeLabel()
+        self.window.meta_owner_department = FakeLabel()
+        self.window.meta_owner_role = FakeLabel()
+        self.window.meta_created_date = FakeLabel()
+        self.window.meta_modified_date = FakeLabel()
+        self.window.meta_fields_table = FakeTable()
+        self.window.find_collection_owner = lambda collection_name: {
+            "nombre": "Equipo Datos",
+            "email": "datos@example.com",
+            "departamento": "IT",
+            "cargo": "Owner",
+        }
+        self.window.load_access_history = lambda collection_name: None
+
+        self.window.load_collection_metadata("users")
+
+        self.assertEqual(self.window.meta_collection_name.text_value, "users")
+        self.assertEqual(self.window.meta_document_count.text_value, "2")
+        self.assertEqual(self.window.meta_content_type.text_value, "Datos de usuarios")
+        self.assertEqual(self.window.meta_owner_name.text_value, "Equipo Datos")
+        self.assertEqual(self.window.meta_owner_email.text_value, "datos@example.com")
+        self.assertEqual(self.window.meta_owner_department.text_value, "IT")
+        self.assertEqual(self.window.meta_owner_role.text_value, "Owner")
+        self.assertEqual(self.window.meta_fields_table.rows, 4)
 
 
 if __name__ == "__main__":
