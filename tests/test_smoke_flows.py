@@ -1,5 +1,8 @@
 import os
+import json
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -9,6 +12,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 
 from gui.main_window import MainWindow
 import gui.mixins.database_management as db_mixin
+import gui.mixins.backup as backup_mixin
 import gui.mixins.maintenance as maintenance_mixin
 
 
@@ -50,7 +54,10 @@ class FakeCollection:
         return len(list(self.find(query)))
 
     def list_indexes(self):
-        return []
+        return [{"name": "_id_", "key": {"_id": 1}}]
+
+    def create_index(self, key, name=None):
+        return name or "_id_"
 
     def delete_one(self, query):
         before = len(self.docs)
@@ -122,6 +129,49 @@ class FakeTabs:
 
     def setCurrentIndex(self, index):
         self.current_index = index
+
+
+class FakeProgressDialog:
+    def __init__(self, *args, **kwargs):
+        self._canceled = False
+        self._value = 0
+        self._label = ""
+        self.accepted = False
+
+    def setWindowTitle(self, *_args, **_kwargs):
+        pass
+
+    def setWindowModality(self, *_args, **_kwargs):
+        pass
+
+    def setAutoClose(self, *_args, **_kwargs):
+        pass
+
+    def setAutoReset(self, *_args, **_kwargs):
+        pass
+
+    def setValue(self, value):
+        self._value = value
+
+    def setLabelText(self, text):
+        self._label = text
+
+    def show(self):
+        pass
+
+    def wasCanceled(self):
+        return self._canceled
+
+
+class FakeDialog:
+    def __init__(self):
+        self.accepted = False
+
+    def accept(self):
+        self.accepted = True
+
+    def reject(self):
+        self.accepted = False
 
 
 class SmokeFlowsTest(unittest.TestCase):
@@ -210,6 +260,68 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertTrue(self.window.tab_widget.isTabEnabled(1))
         self.assertEqual(self.window.tab_widget.current_index, 1)
         self.assertIn(("Cambiado a la base de datos: codex_target", False), messages)
+
+    def test_backup_and_restore_round_trip(self):
+        source_db = FakeDB()
+        source_db.create_collection("alpha")
+        source_db["alpha"].insert_one({"_id": "a1", "name": "uno"})
+        source_db.create_collection("beta")
+        source_db["beta"].insert_one({"_id": "b1", "name": "dos"})
+
+        target_db = FakeDB()
+        self.window.client = FakeClient({"codex_smoke": source_db})
+        self.window.db = source_db
+        self.window.database_name = "codex_smoke"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dialog = FakeDialog()
+            with patch.object(backup_mixin, "QProgressDialog", FakeProgressDialog), \
+                 patch.object(backup_mixin.QMessageBox, "information", return_value=None), \
+                 patch.object(backup_mixin.QMessageBox, "warning", return_value=None), \
+                 patch.object(backup_mixin.QMessageBox, "critical", return_value=None):
+
+                self.window.execute_backup(
+                    tmpdir,
+                    True,
+                    [],
+                    False,
+                    6,
+                    False,
+                    "Diario",
+                    None,
+                    "Lunes",
+                    dialog,
+                )
+
+            metadata = Path(tmpdir, "metadata.json")
+            self.assertTrue(metadata.exists())
+            self.assertTrue(Path(tmpdir, "collections", "alpha.json").exists())
+            self.assertTrue(Path(tmpdir, "collections", "beta.json").exists())
+            self.assertTrue(dialog.accepted)
+
+            self.window.db = target_db
+            self.window.database_name = "codex_smoke"
+            restore_dialog = FakeDialog()
+            with patch.object(backup_mixin, "QProgressDialog", FakeProgressDialog), \
+                 patch.object(backup_mixin.QMessageBox, "information", return_value=None), \
+                 patch.object(backup_mixin.QMessageBox, "warning", return_value=None), \
+                 patch.object(backup_mixin.QMessageBox, "critical", return_value=None):
+
+                metadata_data = json.loads(metadata.read_text(encoding="utf-8"))
+                self.window.execute_restore(
+                    tmpdir,
+                    metadata_data,
+                    True,
+                    [],
+                    2,
+                    False,
+                    restore_dialog,
+                )
+
+            self.assertIn("alpha", self.window.db.list_collection_names())
+            self.assertIn("beta", self.window.db.list_collection_names())
+            self.assertEqual(self.window.db["alpha"].find_one({"_id": "a1"})["name"], "uno")
+            self.assertEqual(self.window.db["beta"].find_one({"_id": "b1"})["name"], "dos")
 
 
 if __name__ == "__main__":
