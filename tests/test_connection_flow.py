@@ -43,6 +43,30 @@ class ConnectionFlowTest(unittest.TestCase):
 
         self.assertEqual(calls, [])
 
+    def test_initialize_connection_falls_back_to_saved_profile(self):
+        calls = []
+        self.window.connection_string = "mongodb+srv://invalid.example.test/"
+        self.window.database_name = "catalogo"
+
+        def fake_connect(connection_string, database_name):
+            calls.append((connection_string, database_name))
+            if connection_string == "mongodb+srv://invalid.example.test/":
+                raise RuntimeError("DNS failure")
+
+        with patch.object(self.window, "_load_saved_connection_profiles", return_value=[
+            {"name": "saved", "uri": "mongodb://saved.example.test:27017/"}
+        ]):
+            self.window._connect_to_database = fake_connect
+            self.window.initialize_connection()
+
+        self.assertEqual(
+            calls,
+            [
+                ("mongodb+srv://invalid.example.test/", "catalogo"),
+                ("mongodb://saved.example.test:27017/", "catalogo"),
+            ],
+        )
+
     def test_open_connection_dialog_calls_connect_with_selected_data(self):
         calls = []
 

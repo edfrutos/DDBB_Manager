@@ -300,6 +300,19 @@ class MainWindow(
         if tracker:
             tracker.heartbeat(entity, category=category, type_=type_)
 
+    def _load_saved_connection_profiles(self):
+        """Load persisted connection profiles used by the connection dialog."""
+        try:
+            profiles_file = ConnectionDialog.PROFILES_FILE
+            if os.path.exists(profiles_file):
+                with open(profiles_file, "r", encoding="utf-8") as f:
+                    profiles = json.load(f)
+                    if isinstance(profiles, list):
+                        return profiles
+        except Exception:
+            pass
+        return []
+
     def setup_dashboard_tab(self):
         """Configurar la pestaña de panel de control"""
         # Crear widget contenedor
@@ -680,29 +693,38 @@ Ejemplos de consultas:
             return
 
         database_name = os.environ.get("MONGODB_DATABASE") or self.database_name
+        candidate_uris = []
+        if self.connection_string:
+            candidate_uris.append(self.connection_string)
+        for profile in self._load_saved_connection_profiles():
+            uri = profile.get("uri")
+            if uri and uri not in candidate_uris:
+                candidate_uris.append(uri)
+
+        if not candidate_uris:
+            return
 
         self.connection_in_progress = True
         self.show_status_message(f"Conectando automáticamente a {database_name}...", timeout=0)
 
+        last_error = None
         try:
-            self._connect_to_database(self.connection_string, database_name)
+            for uri in candidate_uris:
+                try:
+                    self._connect_to_database(uri, database_name)
+                    self.connection_string = uri
+                    return
+                except (ConnectionFailure, ServerSelectionTimeoutError, OSError, Exception) as e:
+                    last_error = e
+                    print(f"Error de conexión automática con URI candidata: {e}")
+                    continue
 
-        except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-            print(f"Error de conexión automática: {e}")
-            self.show_status_message(
-                f"No se pudo conectar automáticamente a MongoDB: {e}. "
-                "Use Conexión > Conectar para conectarse manualmente.",
-                error=True,
-            )
-
-        except Exception as e:
-            print(f"Error inesperado durante la conexión automática: {e}")
-            traceback.print_exc()
-            self.show_status_message(
-                f"Error al conectar automáticamente: {e}. "
-                "Use Conexión > Conectar para conectarse manualmente.",
-                error=True,
-            )
+            if last_error is not None:
+                self.show_status_message(
+                    f"No se pudo conectar automáticamente a MongoDB: {last_error}. "
+                    "Use Conexión > Conectar para conectarse manualmente.",
+                    error=True,
+                )
 
         finally:
             self.connection_in_progress = False
