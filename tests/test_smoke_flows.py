@@ -1121,6 +1121,75 @@ class SmokeFlowsTest(unittest.TestCase):
 
         self.assertEqual(captured["title"], "Propietarios de Colecciones - codex_smoke")
 
+    def test_show_collection_owners_exposes_view_details_action(self):
+        self.window.db.create_collection("orders")
+        self.window.db["orders"].insert_one({
+            "type": "metadata",
+            "owner": "Equipo Ventas",
+            "email": "ventas@example.com",
+            "department": "Sales",
+            "role": "Owner",
+        })
+
+        class CapturingLayout:
+            last_instance = None
+
+            def __init__(self, *_args, **_kwargs):
+                self.widgets = []
+                CapturingLayout.last_instance = self
+
+            def addWidget(self, widget, *_args, **_kwargs):
+                self.widgets.append(widget)
+
+            def addLayout(self, layout, *_args, **_kwargs):
+                self.widgets.append(layout)
+
+            def addStretch(self, *_args, **_kwargs):
+                pass
+
+        class CapturingButton:
+            instances = []
+
+            def __init__(self, text=""):
+                self.text = text
+                self.clicked = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                CapturingButton.instances.append(self)
+
+            def setStyleSheet(self, *_args, **_kwargs):
+                pass
+
+        class OwnersDialog(db_mixin.QWidget):
+            def __init__(self, *_args, **_kwargs):
+                super().__init__()
+
+            def setWindowTitle(self, *_args, **_kwargs):
+                pass
+
+            def resize(self, *_args):
+                pass
+
+            def exec(self):
+                return 0
+
+            def accept(self):
+                pass
+
+            def reject(self):
+                pass
+
+        with patch.object(db_mixin, "QDialog", OwnersDialog), \
+             patch.object(db_mixin, "QVBoxLayout", CapturingLayout), \
+             patch.object(db_mixin, "QHBoxLayout", CapturingLayout), \
+             patch.object(db_mixin, "QPushButton", CapturingButton), \
+             patch.object(db_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(db_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(db_mixin.QMessageBox, "critical", return_value=None):
+            self.window.show_collection_owners()
+
+        button_texts = [button.text for button in CapturingButton.instances]
+        self.assertIn("Ver Detalles", button_texts)
+        self.assertIn("Cerrar", button_texts)
+
     def test_view_table_owner_details_handles_collection_table_shape(self):
         self.window.db.create_collection("orders")
         self.window.db["orders"].insert_one({

@@ -127,6 +127,8 @@ class DatabaseManagementMixin:
         table.setAlternatingRowColors(True)
         table.setSortingEnabled(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
 
         for row, (collection_name, owner_info) in enumerate(sorted(owners.items())):
             table.setItem(row, 0, QTableWidgetItem(collection_name))
@@ -140,10 +142,16 @@ class DatabaseManagementMixin:
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
+        view_details_button = QPushButton("Ver Detalles")
+        view_details_button.clicked.connect(lambda: self.view_table_owner_details(table))
+        button_layout.addWidget(view_details_button)
+
         close_button = QPushButton("Cerrar")
         close_button.clicked.connect(dialog.accept)
         button_layout.addWidget(close_button)
         layout.addLayout(button_layout)
+
+        table.doubleClicked.connect(lambda *_args: self.view_table_owner_details(table))
 
         dialog.exec()
 
