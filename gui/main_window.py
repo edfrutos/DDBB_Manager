@@ -464,6 +464,16 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
             self.data_table = QTableWidget()
             self.data_table.setAlternatingRowColors(True)
         data_tab_layout.addWidget(self.data_table)
+
+        data_actions_layout = QHBoxLayout()
+        data_actions_layout.addStretch()
+
+        self.edit_record_button = QPushButton("Editar registro")
+        self.edit_record_button.setToolTip("Editar el registro seleccionado en la colección actual")
+        self.edit_record_button.clicked.connect(self.edit_selected_document)
+        data_actions_layout.addWidget(self.edit_record_button)
+
+        data_tab_layout.addLayout(data_actions_layout)
         
         self.collection_view_tabs.addTab(data_tab, "Datos")
         

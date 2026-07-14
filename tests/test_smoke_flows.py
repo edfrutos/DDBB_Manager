@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from bson import json_util
 from bson.objectid import ObjectId
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
@@ -84,6 +85,13 @@ class FakeCollection:
 
     def update_many(self, query, update):
         return self._update(query, update, first_only=False)
+
+    def replace_one(self, query, replacement):
+        for idx, doc in enumerate(self.docs):
+            if self._matches(doc, query):
+                self.docs[idx] = replacement
+                return SimpleNamespace(matched_count=1, modified_count=1)
+        return SimpleNamespace(matched_count=0, modified_count=0)
 
     def _update(self, query, update, first_only=False):
         matched = 0
@@ -348,6 +356,12 @@ class FakeTable:
 
     def parent(self):
         return None
+
+    def setSelectionBehavior(self, *_args, **_kwargs):
+        pass
+
+    def setSelectionMode(self, *_args, **_kwargs):
+        pass
 
 
 class FakeTree:
@@ -1351,6 +1365,90 @@ class SmokeFlowsTest(unittest.TestCase):
 
         self.assertFalse(captured["warnings"])
         self.assertEqual([cmd for cmd, _collection in stats_db.commands], ["dbStats"])
+
+    def test_edit_selected_document_updates_document(self):
+        self.window.db.create_collection("users")
+        original_doc = {
+            "_id": ObjectId("68b0292c25470b54385c4738"),
+            "name": "Ana",
+            "email": "ana@example.com",
+            "active": True,
+        }
+        self.window.db["users"].insert_one(original_doc.copy())
+        self.window.current_collection = "users"
+        self.window.show_collection_data = lambda *_args, **_kwargs: None
+
+        class DataTable:
+            def currentRow(self):
+                return 0
+
+            def selectedItems(self):
+                return [FakeTableItem("selected")]
+
+            def columnCount(self):
+                return 3
+
+            def item(self, row, column):
+                if row != 0 or column != 0:
+                    return None
+                return FakeTableItem(str(original_doc["_id"]))
+
+        class EditorDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                self.accepted = True
+
+            def setWindowTitle(self, *_args, **_kwargs):
+                pass
+
+            def resize(self, *_args):
+                pass
+
+            def exec(self):
+                return self.DialogCode.Accepted
+
+            def accept(self):
+                self.accepted = True
+
+            def reject(self):
+                self.accepted = False
+
+        class EditorWidget:
+            def __init__(self):
+                self.value = ""
+
+            def setPlainText(self, value):
+                self.value = value
+
+            def toPlainText(self):
+                payload = json_util.loads(self.value)
+                payload["email"] = "ana.editada@example.com"
+                return json_util.dumps(payload)
+
+        class ButtonBox:
+            class StandardButton:
+                Save = 1
+                Cancel = 2
+
+            def __init__(self, *_args, **_kwargs):
+                self.accepted = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.rejected = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+        self.window.data_table = DataTable()
+
+        with patch.object(collection_views_mixin, "QDialog", EditorDialog), \
+             patch.object(collection_views_mixin, "QPlainTextEdit", EditorWidget), \
+             patch.object(collection_views_mixin, "QDialogButtonBox", ButtonBox), \
+             patch.object(collection_views_mixin, "QVBoxLayout", FakeVBoxLayout), \
+             patch.object(collection_views_mixin, "QLabel", lambda *_args, **_kwargs: SimpleNamespace()), \
+             patch.object(collection_views_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(collection_views_mixin.QMessageBox, "critical", return_value=None):
+            self.window.edit_selected_document()
+
+        updated = self.window.db["users"].find_one({"_id": original_doc["_id"]})
+        self.assertEqual(updated["email"], "ana.editada@example.com")
 
     def test_show_global_stats(self):
         self.window.client = FakeClient({"sales": FakeDB(), "ops": FakeDB(), "admin": FakeDB()})

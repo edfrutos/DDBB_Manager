@@ -2,6 +2,8 @@ import datetime
 import traceback
 import time
 
+from bson import json_util
+
 try:
     from PyQt6 import sip
 except ImportError:
@@ -11,11 +13,15 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
     QMessageBox,
     QProgressDialog,
     QStyle,
+    QTableWidget,
     QTableWidgetItem,
     QTreeView,
     QVBoxLayout,
@@ -352,6 +358,102 @@ class CollectionViewMixin:
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error al mostrar datos de colección: {str(e)}")
 
+    def edit_selected_document(self):
+        """Editar el documento seleccionado en la tabla de datos de la colección actual."""
+        try:
+            if self.db is None:
+                QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
+                return
+
+            if not getattr(self, "current_collection", None):
+                QMessageBox.warning(self, "Advertencia", "Seleccione una colección primero")
+                return
+
+            if not hasattr(self, "data_table") or self.data_table is None:
+                QMessageBox.warning(self, "Advertencia", "No hay datos cargados para editar")
+                return
+
+            selected_items = self.data_table.selectedItems()
+            if not selected_items:
+                QMessageBox.warning(self, "Advertencia", "Seleccione un registro para editar")
+                return
+
+            selected_row = self.data_table.currentRow()
+            if selected_row < 0:
+                QMessageBox.warning(self, "Advertencia", "Seleccione un registro para editar")
+                return
+
+            if self.data_table.columnCount() == 0:
+                QMessageBox.warning(self, "Advertencia", "La tabla no contiene datos editables")
+                return
+
+            id_item = self.data_table.item(selected_row, 0)
+            if id_item is None:
+                QMessageBox.warning(self, "Advertencia", "No se pudo identificar el documento seleccionado")
+                return
+
+            raw_id = id_item.text().strip()
+            if not raw_id:
+                QMessageBox.warning(self, "Advertencia", "No se pudo identificar el documento seleccionado")
+                return
+
+            collection = self.db[self.current_collection]
+            document = collection.find_one({"_id": raw_id})
+            if document is None:
+                try:
+                    from bson.objectid import ObjectId
+                    document = collection.find_one({"_id": ObjectId(raw_id)})
+                except Exception:
+                    document = None
+
+            if document is None:
+                QMessageBox.warning(self, "Advertencia", "No se encontró el documento seleccionado en la base de datos")
+                return
+
+            editor_dialog = QDialog(self)
+            editor_dialog.setWindowTitle(f"Editar Registro - {self.current_collection}")
+            editor_dialog.resize(800, 600)
+
+            layout = QVBoxLayout(editor_dialog)
+            layout.addWidget(QLabel("Edite el documento en formato JSON. El campo _id se mantiene protegido."))
+
+            editor = QPlainTextEdit()
+            editor.setPlainText(json_util.dumps(document, indent=2))
+            layout.addWidget(editor)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(editor_dialog.accept)
+            buttons.rejected.connect(editor_dialog.reject)
+            layout.addWidget(buttons)
+
+            if editor_dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            try:
+                updated_document = json_util.loads(editor.toPlainText())
+            except Exception as parse_error:
+                QMessageBox.critical(self, "Error", f"El JSON editado no es válido: {str(parse_error)}")
+                return
+
+            updated_document["_id"] = document["_id"]
+
+            try:
+                result = collection.replace_one({"_id": document["_id"]}, updated_document)
+            except Exception as update_error:
+                QMessageBox.critical(self, "Error", f"No se pudo guardar el registro: {str(update_error)}")
+                return
+
+            if getattr(result, "matched_count", 0) == 0:
+                QMessageBox.warning(self, "Advertencia", "No se encontró el documento para actualizar")
+                return
+
+            self.show_collection_data(self.current_collection, limit=100, with_metadata=True)
+            self.show_status_message(f"Registro actualizado en '{self.current_collection}'")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al editar el registro: {str(e)}")
+            traceback.print_exc()
+
     def show_collection_data(self, collection_name, limit=100, with_metadata=False):
         """Show data from the specified collection in the data table."""
         try:
@@ -365,6 +467,8 @@ class CollectionViewMixin:
                 self.data_table.clear()
                 self.data_table.setRowCount(0)
                 self.data_table.setColumnCount(0)
+                self.data_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+                self.data_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
                 if self.data_table.parent() is None and hasattr(self, "collections_tab_widget"):
                     data_tab = self.collections_tab_widget.widget(0)
                     if data_tab and data_tab.layout():
