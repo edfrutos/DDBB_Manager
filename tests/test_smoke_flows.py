@@ -1543,6 +1543,36 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertIsNotNone(created)
         self.assertEqual(created["email"], "nuevo@example.com")
 
+    def test_duplicate_selected_document_creates_copy(self):
+        self.window.db.create_collection("users")
+        original_doc = {
+            "_id": ObjectId("68b0292c25470b54385c4738"),
+            "name": "Ana",
+            "email": "ana@example.com",
+            "active": True,
+        }
+        self.window.db["users"].insert_one(original_doc.copy())
+        self.window.current_collection = "users"
+        self.window.show_collection_data = lambda *_args, **_kwargs: None
+
+        class DataTable:
+            def currentRow(self):
+                return 0
+
+            def item(self, row, column):
+                if row != 0 or column != 0:
+                    return None
+                return FakeTableItem(str(original_doc["_id"]))
+
+        self.window.data_table = DataTable()
+
+        with patch.object(collection_views_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(collection_views_mixin.QMessageBox, "critical", return_value=None):
+            self.window.duplicate_selected_document()
+
+        self.assertEqual(self.window.db["users"].count_documents({}), 2)
+        self.assertEqual(self.window.db["users"].count_documents({"name": "Ana"}), 2)
+
     def test_show_global_stats(self):
         self.window.client = FakeClient({"sales": FakeDB(), "ops": FakeDB(), "admin": FakeDB()})
         self.window.client._databases["sales"].create_collection("orders")

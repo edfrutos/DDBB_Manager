@@ -569,6 +569,61 @@ class CollectionViewMixin:
             QMessageBox.critical(self, "Error", f"Error al crear el registro: {str(e)}")
             traceback.print_exc()
 
+    def duplicate_selected_document(self):
+        """Duplicar el documento seleccionado en la tabla de datos de la colección actual."""
+        try:
+            if self.db is None:
+                QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
+                return
+
+            if not getattr(self, "current_collection", None):
+                QMessageBox.warning(self, "Advertencia", "Seleccione una colección primero")
+                return
+
+            if not hasattr(self, "data_table") or self.data_table is None:
+                QMessageBox.warning(self, "Advertencia", "No hay datos cargados para duplicar")
+                return
+
+            selected_row = self.data_table.currentRow()
+            if selected_row < 0:
+                QMessageBox.warning(self, "Advertencia", "Seleccione un registro para duplicar")
+                return
+
+            id_item = self.data_table.item(selected_row, 0)
+            if id_item is None or not id_item.text().strip():
+                QMessageBox.warning(self, "Advertencia", "No se pudo identificar el documento seleccionado")
+                return
+
+            raw_id = id_item.text().strip()
+            collection = self.db[self.current_collection]
+            document = collection.find_one({"_id": raw_id})
+            if document is None:
+                try:
+                    from bson.objectid import ObjectId
+                    document = collection.find_one({"_id": ObjectId(raw_id)})
+                except Exception:
+                    document = None
+
+            if document is None:
+                QMessageBox.warning(self, "Advertencia", "No se encontró el documento seleccionado en la base de datos")
+                return
+
+            duplicate_document = json_util.loads(json_util.dumps(document))
+            duplicate_document.pop("_id", None)
+
+            try:
+                result = collection.insert_one(duplicate_document)
+            except Exception as insert_error:
+                QMessageBox.critical(self, "Error", f"No se pudo duplicar el registro: {str(insert_error)}")
+                return
+
+            self.show_collection_data(self.current_collection, limit=100, with_metadata=True)
+            self.show_status_message(f"Registro duplicado en '{self.current_collection}' ({result.inserted_id})")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al duplicar el registro: {str(e)}")
+            traceback.print_exc()
+
     def show_collection_data(self, collection_name, limit=100, with_metadata=False):
         """Show data from the specified collection in the data table."""
         try:

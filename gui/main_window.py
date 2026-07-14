@@ -478,6 +478,11 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
         self.add_record_button.clicked.connect(self.insert_new_document)
         data_actions_layout.addWidget(self.add_record_button)
 
+        self.duplicate_record_button = QPushButton("Duplicar registro")
+        self.duplicate_record_button.setToolTip("Duplicar el registro seleccionado en la colección actual")
+        self.duplicate_record_button.clicked.connect(self.duplicate_selected_document)
+        data_actions_layout.addWidget(self.duplicate_record_button)
+
         self.delete_record_button = QPushButton("Eliminar registro")
         self.delete_record_button.setToolTip("Eliminar el registro seleccionado en la colección actual")
         self.delete_record_button.clicked.connect(self.delete_selected_document)
