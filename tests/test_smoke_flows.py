@@ -1081,6 +1081,46 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(owners["orders"]["nombre"], "Equipo Ventas")
         self.assertEqual(owners["orders"]["email"], "ventas@example.com")
 
+    def test_show_collection_owners_renders_dialog(self):
+        self.window.db.create_collection("orders")
+        self.window.db["orders"].insert_one({
+            "type": "metadata",
+            "owner": "Equipo Ventas",
+            "email": "ventas@example.com",
+            "department": "Sales",
+            "role": "Owner",
+        })
+
+        captured = {"title": None}
+
+        class OwnersDialog(db_mixin.QWidget):
+            def __init__(self, *_args, **_kwargs):
+                super().__init__()
+                self.accepted = False
+
+            def setWindowTitle(self, value):
+                captured["title"] = value
+
+            def resize(self, *_args):
+                pass
+
+            def exec(self):
+                return 0
+
+            def accept(self):
+                self.accepted = True
+
+            def reject(self):
+                self.accepted = False
+
+        with patch.object(db_mixin, "QDialog", OwnersDialog), \
+             patch.object(db_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(db_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(db_mixin.QMessageBox, "critical", return_value=None):
+            self.window.show_collection_owners()
+
+        self.assertEqual(captured["title"], "Propietarios de Colecciones - codex_smoke")
+
     def test_show_global_stats(self):
         self.window.client = FakeClient({"sales": FakeDB(), "ops": FakeDB(), "admin": FakeDB()})
         self.window.client._databases["sales"].create_collection("orders")

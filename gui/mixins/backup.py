@@ -2,7 +2,6 @@ import os
 import json
 import datetime
 import gzip
-import threading
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -176,113 +175,100 @@ class BackupMixin:
             progress_dialog.setValue(0)
             progress_dialog.show()
 
-            def perform_backup():
-                try:
-                    progress_dialog.setLabelText("Recopilando información de la base de datos...")
-                    progress_dialog.setValue(5)
+            progress_dialog.setLabelText("Recopilando información de la base de datos...")
+            progress_dialog.setValue(5)
+            QApplication.processEvents()
 
-                    collections_to_backup = []
-                    if is_full_backup:
-                        collections_to_backup = [col for col in self.db.list_collection_names()
-                                               if not col.startswith('system.')]
-                    else:
-                        collections_to_backup = selected_collections
+            collections_to_backup = []
+            if is_full_backup:
+                collections_to_backup = [col for col in self.db.list_collection_names()
+                                       if not col.startswith('system.')]
+            else:
+                collections_to_backup = selected_collections
 
-                    progress_dialog.setLabelText(f"Respaldando {len(collections_to_backup)} colecciones...")
-                    progress_dialog.setValue(10)
+            progress_dialog.setLabelText(f"Respaldando {len(collections_to_backup)} colecciones...")
+            progress_dialog.setValue(10)
+            QApplication.processEvents()
 
-                    metadata = {
-                        'database': self.database_name,
-                        'timestamp': datetime.datetime.now().isoformat(),
-                        'collections': collections_to_backup,
-                        'compressed': compress_backup,
-                        'full_backup': is_full_backup,
-                        'version': '1.0'
-                    }
+            metadata = {
+                'database': self.database_name,
+                'timestamp': datetime.datetime.now().isoformat(),
+                'collections': collections_to_backup,
+                'compressed': compress_backup,
+                'full_backup': is_full_backup,
+                'version': '1.0'
+            }
 
-                    metadata_path = os.path.join(backup_path, 'metadata.json')
-                    with open(metadata_path, 'w', encoding='utf-8') as f:
-                        json.dump(metadata, f, indent=2, default=str)
+            metadata_path = os.path.join(backup_path, 'metadata.json')
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, default=str)
 
-                    data_dir = os.path.join(backup_path, 'collections')
-                    if not os.path.exists(data_dir):
-                        os.makedirs(data_dir)
+            data_dir = os.path.join(backup_path, 'collections')
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir)
 
-                    total_collections = len(collections_to_backup)
-                    for i, collection_name in enumerate(collections_to_backup):
-                        if progress_dialog.wasCanceled():
-                            break
+            total_collections = len(collections_to_backup)
+            total_for_progress = max(1, total_collections)
+            for i, collection_name in enumerate(collections_to_backup):
+                if progress_dialog.wasCanceled():
+                    break
 
-                        progress_percent = 10 + int((i / total_collections) * 80)
-                        progress_dialog.setValue(progress_percent)
-                        progress_dialog.setLabelText(f"Respaldando colección: {collection_name}...")
-
-                        try:
-                            collection = self.db[collection_name]
-                            documents = list(collection.find())
-
-                            collection_file = os.path.join(data_dir, f"{collection_name}.json")
-
-                            if compress_backup:
-                                with gzip.open(collection_file + '.gz', 'wt', encoding='utf-8', compresslevel=compression_level) as f:
-                                    json.dump(documents, f, default=str, indent=None)
-                            else:
-                                with open(collection_file, 'w', encoding='utf-8') as f:
-                                    json.dump(documents, f, default=str, indent=2)
-
-                            indexes = list(collection.list_indexes())
-                            indexes_file = os.path.join(data_dir, f"{collection_name}_indexes.json")
-
-                            if compress_backup:
-                                with gzip.open(indexes_file + '.gz', 'wt', encoding='utf-8', compresslevel=compression_level) as f:
-                                    json.dump(indexes, f, default=str, indent=None)
-                            else:
-                                with open(indexes_file, 'w', encoding='utf-8') as f:
-                                    json.dump(indexes, f, default=str, indent=2)
-
-                        except Exception as col_error:
-                            progress_dialog.setLabelText(f"Error en colección {collection_name}: {str(col_error)}")
-                            print(f"Error al respaldar colección {collection_name}: {col_error}")
-                            continue
-
-                    log_file = os.path.join(backup_path, 'backup_log.txt')
-                    with open(log_file, 'w', encoding='utf-8') as f:
-                        f.write(f"Respaldo de {self.database_name} completado en {datetime.datetime.now().isoformat()}\n")
-                        f.write(f"Tipo: {'Completo' if is_full_backup else 'Selectivo'}\n")
-                        f.write(f"Colecciones respaldadas: {len(collections_to_backup)}\n")
-                        for col in collections_to_backup:
-                            f.write(f"  - {col}\n")
-
-                    progress_dialog.setValue(100)
-                    progress_dialog.setLabelText("Respaldo completado con éxito")
-
-                    return True, "Respaldo completado con éxito"
-
-                except Exception as e:
-                    progress_dialog.setLabelText(f"Error durante el respaldo: {str(e)}")
-                    print(f"Error durante el respaldo: {e}")
-                    return False, str(e)
-
-            backup_thread = threading.Thread(target=perform_backup)
-            backup_thread.daemon = True
-            backup_thread.start()
-
-            while backup_thread.is_alive() and not progress_dialog.wasCanceled():
+                progress_percent = 10 + int((i / total_for_progress) * 80)
+                progress_dialog.setValue(progress_percent)
+                progress_dialog.setLabelText(f"Respaldando colección: {collection_name}...")
                 QApplication.processEvents()
+
+                try:
+                    collection = self.db[collection_name]
+                    documents = list(collection.find())
+
+                    collection_file = os.path.join(data_dir, f"{collection_name}.json")
+
+                    if compress_backup:
+                        with gzip.open(collection_file + '.gz', 'wt', encoding='utf-8', compresslevel=compression_level) as f:
+                            json.dump(documents, f, default=str, indent=None)
+                    else:
+                        with open(collection_file, 'w', encoding='utf-8') as f:
+                            json.dump(documents, f, default=str, indent=2)
+
+                    indexes = list(collection.list_indexes())
+                    indexes_file = os.path.join(data_dir, f"{collection_name}_indexes.json")
+
+                    if compress_backup:
+                        with gzip.open(indexes_file + '.gz', 'wt', encoding='utf-8', compresslevel=compression_level) as f:
+                            json.dump(indexes, f, default=str, indent=None)
+                    else:
+                        with open(indexes_file, 'w', encoding='utf-8') as f:
+                            json.dump(indexes, f, default=str, indent=2)
+
+                except Exception as col_error:
+                    progress_dialog.setLabelText(f"Error en colección {collection_name}: {str(col_error)}")
+                    print(f"Error al respaldar colección {collection_name}: {col_error}")
+                    continue
+
+            log_file = os.path.join(backup_path, 'backup_log.txt')
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write(f"Respaldo de {self.database_name} completado en {datetime.datetime.now().isoformat()}\n")
+                f.write(f"Tipo: {'Completo' if is_full_backup else 'Selectivo'}\n")
+                f.write(f"Colecciones respaldadas: {len(collections_to_backup)}\n")
+                for col in collections_to_backup:
+                    f.write(f"  - {col}\n")
+
+            progress_dialog.setValue(100)
+            progress_dialog.setLabelText("Respaldo completado con éxito")
+            QApplication.processEvents()
 
             if progress_dialog.wasCanceled():
                 QMessageBox.warning(dialog, "Advertencia", "Respaldo cancelado por el usuario")
                 dialog.accept()
                 return
 
-            completed = not backup_thread.is_alive()
-            if completed:
-                QMessageBox.information(
-                    dialog,
-                    "Respaldo Completado",
-                    f"El respaldo se ha completado exitosamente en:\n{backup_path}"
-                )
-                dialog.accept()
+            QMessageBox.information(
+                dialog,
+                "Respaldo Completado",
+                f"El respaldo se ha completado exitosamente en:\n{backup_path}"
+            )
+            dialog.accept()
 
         except Exception as e:
             QMessageBox.critical(dialog, "Error", f"Error al ejecutar el respaldo: {str(e)}")
@@ -551,138 +537,147 @@ class BackupMixin:
             progress_dialog.setAutoClose(False)
             progress_dialog.setAutoReset(False)
             progress_dialog.setValue(0)
+            progress_dialog.show()
 
-            def perform_restore():
-                for i, collection_name in enumerate(collections_to_restore):
-                    if progress_dialog.wasCanceled():
-                        break
+            for i, collection_name in enumerate(collections_to_restore):
+                if progress_dialog.wasCanceled():
+                    break
 
-                    pct = 10 + int((i / total_cols) * 80)
-                    progress_dialog.setValue(pct)
-                    progress_dialog.setLabelText(
-                        f"Restaurando colección: {collection_name}..."
-                    )
-
-                    try:
-                        col_file = os.path.join(
-                            collections_dir, f"{collection_name}.json"
-                        )
-                        col_gz = col_file + ".gz"
-
-                        if not os.path.exists(col_file) and not os.path.exists(col_gz):
-                            errors.append(
-                                f"Archivo '{collection_name}' no encontrado"
-                            )
-                            continue
-
-                        if drop_first and collection_name in self.db.list_collection_names():
-                            self.db.drop_collection(collection_name)
-
-                        documents = []
-                        if is_compressed and os.path.exists(col_gz):
-                            with gzip.open(col_gz, "rt", encoding="utf-8") as f:
-                                documents = json.load(f)
-                        elif os.path.exists(col_file):
-                            with open(col_file, "r", encoding="utf-8") as f:
-                                documents = json.load(f)
-
-                        if not documents:
-                            errors.append(
-                                f"Sin documentos en '{collection_name}'"
-                            )
-                            continue
-
-                        for doc in documents:
-                            if (
-                                ObjectId is not None
-                                and "_id" in doc
-                                and isinstance(doc["_id"], str)
-                                and doc["_id"].startswith("ObjectId(")
-                            ):
-                                id_str = (
-                                    doc["_id"]
-                                    .replace("ObjectId('", "")
-                                    .replace("')", "")
-                                    .replace('"', "")
-                                )
-                                try:
-                                    doc["_id"] = ObjectId(id_str)
-                                except Exception:
-                                    pass
-
-                        col = self.db[collection_name]
-                        if conflict_mode == 0:
-                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
-                            to_rm = [d for d in documents if d["_id"] in existing]
-                            if to_rm:
-                                col.delete_many({"_id": {"$in": [d["_id"] for d in to_rm]}})
-                            col.insert_many(documents)
-                        elif conflict_mode == 1:
-                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
-                            to_ins = [d for d in documents if d["_id"] not in existing]
-                            if to_ins:
-                                col.insert_many(to_ins)
-                        else:
-                            existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
-                            to_ins = [d for d in documents if d["_id"] not in existing]
-                            if to_ins:
-                                col.insert_many(to_ins)
-
-                        idx_file = os.path.join(
-                            collections_dir, f"{collection_name}_indexes.json"
-                        )
-                        idx_gz = idx_file + ".gz"
-                        indexes = []
-                        if os.path.exists(idx_file):
-                            with open(idx_file, "r", encoding="utf-8") as f_i:
-                                indexes = json.load(f_i)
-                        elif os.path.exists(idx_gz):
-                            with gzip.open(idx_gz, "rt", encoding="utf-8") as f_i:
-                                indexes = json.load(f_i)
-
-                        for idx in indexes:
-                            if idx.get("name") != "_id_":
-                                try:
-                                    col.create_index(idx["key"], name=idx.get("name"))
-                                except Exception:
-                                    pass
-
-                        restored_collections[0] += 1
-
-                    except Exception as exc:
-                        errors.append(f"Error restaurando '{collection_name}': {exc}")
-
-                report_file = os.path.join(backup_dir, "restore_report.txt")
-                try:
-                    with open(report_file, "w", encoding="utf-8") as f:
-                        tipo = "Completa" if is_full_restore else "Selectiva"
-                        print("Informe de restauracion", file=f)
-                        print(f"Tipo: {tipo}", file=f)
-                        print(
-                            f"Colecciones restauradas: {restored_collections[0]}"
-                            f" de {len(collections_to_restore)}",
-                            file=f,
-                        )
-                        if errors:
-                            print("", file=f)
-                            print("Errores durante la restauracion:", file=f)
-                            for err in errors:
-                                print(f"  - {err}", file=f)
-                except Exception:
-                    pass
-
-                progress_dialog.setValue(100)
+                pct = 10 + int((i / max(1, total_cols)) * 80)
+                progress_dialog.setValue(pct)
                 progress_dialog.setLabelText(
-                    f"Restauracion completada. "
-                    f"{restored_collections[0]} colecciones restauradas."
+                    f"Restaurando colección: {collection_name}..."
                 )
-
-            restore_thread = threading.Thread(target=perform_restore)
-            restore_thread.daemon = True
-            restore_thread.start()
-
-            while restore_thread.is_alive() and not progress_dialog.wasCanceled():
                 QApplication.processEvents()
+
+                try:
+                    col_file = os.path.join(
+                        collections_dir, f"{collection_name}.json"
+                    )
+                    col_gz = col_file + ".gz"
+
+                    if not os.path.exists(col_file) and not os.path.exists(col_gz):
+                        errors.append(
+                            f"Archivo '{collection_name}' no encontrado"
+                        )
+                        continue
+
+                    if drop_first and collection_name in self.db.list_collection_names():
+                        self.db.drop_collection(collection_name)
+
+                    documents = []
+                    if is_compressed and os.path.exists(col_gz):
+                        with gzip.open(col_gz, "rt", encoding="utf-8") as f:
+                            documents = json.load(f)
+                    elif os.path.exists(col_file):
+                        with open(col_file, "r", encoding="utf-8") as f:
+                            documents = json.load(f)
+
+                    if not documents:
+                        errors.append(
+                            f"Sin documentos en '{collection_name}'"
+                        )
+                        continue
+
+                    for doc in documents:
+                        if (
+                            ObjectId is not None
+                            and "_id" in doc
+                            and isinstance(doc["_id"], str)
+                            and doc["_id"].startswith("ObjectId(")
+                        ):
+                            id_str = (
+                                doc["_id"]
+                                .replace("ObjectId('", "")
+                                .replace("')", "")
+                                .replace('"', "")
+                            )
+                            try:
+                                doc["_id"] = ObjectId(id_str)
+                            except Exception:
+                                pass
+
+                    col = self.db[collection_name]
+                    if conflict_mode == 0:
+                        existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
+                        to_rm = [d for d in documents if d["_id"] in existing]
+                        if to_rm:
+                            col.delete_many({"_id": {"$in": [d["_id"] for d in to_rm]}})
+                        col.insert_many(documents)
+                    elif conflict_mode == 1:
+                        existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
+                        to_ins = [d for d in documents if d["_id"] not in existing]
+                        if to_ins:
+                            col.insert_many(to_ins)
+                    else:
+                        existing = set(d["_id"] for d in col.find({}, {"_id": 1}))
+                        to_ins = [d for d in documents if d["_id"] not in existing]
+                        if to_ins:
+                            col.insert_many(to_ins)
+
+                    idx_file = os.path.join(
+                        collections_dir, f"{collection_name}_indexes.json"
+                    )
+                    idx_gz = idx_file + ".gz"
+                    indexes = []
+                    if os.path.exists(idx_file):
+                        with open(idx_file, "r", encoding="utf-8") as f_i:
+                            indexes = json.load(f_i)
+                    elif os.path.exists(idx_gz):
+                        with gzip.open(idx_gz, "rt", encoding="utf-8") as f_i:
+                            indexes = json.load(f_i)
+
+                    for idx in indexes:
+                        if idx.get("name") != "_id_":
+                            try:
+                                col.create_index(idx["key"], name=idx.get("name"))
+                            except Exception:
+                                pass
+
+                    restored_collections[0] += 1
+
+                except Exception as exc:
+                    errors.append(f"Error restaurando '{collection_name}': {exc}")
+
+            report_file = os.path.join(backup_dir, "restore_report.txt")
+            try:
+                with open(report_file, "w", encoding="utf-8") as f:
+                    tipo = "Completa" if is_full_restore else "Selectiva"
+                    print("Informe de restauracion", file=f)
+                    print(f"Tipo: {tipo}", file=f)
+                    print(
+                        f"Colecciones restauradas: {restored_collections[0]}"
+                        f" de {len(collections_to_restore)}",
+                        file=f,
+                    )
+                    if errors:
+                        print("", file=f)
+                        print("Errores durante la restauracion:", file=f)
+                        for err in errors:
+                            print(f"  - {err}", file=f)
+            except Exception:
+                pass
+
+            progress_dialog.setValue(100)
+            progress_dialog.setLabelText(
+                f"Restauracion completada. "
+                f"{restored_collections[0]} colecciones restauradas."
+            )
+            QApplication.processEvents()
+
+            if progress_dialog.wasCanceled():
+                QMessageBox.warning(
+                    dialog, "Advertencia", "Restauración cancelada por el usuario"
+                )
+                dialog.accept()
+                return
+
+            QMessageBox.information(
+                dialog,
+                "Restauración Completada",
+                f"La restauración se ha completado exitosamente desde:\n{backup_dir}"
+            )
+            dialog.accept()
 
         except Exception as e:
             QMessageBox.critical(
