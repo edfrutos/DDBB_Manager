@@ -1450,6 +1450,36 @@ class SmokeFlowsTest(unittest.TestCase):
         updated = self.window.db["users"].find_one({"_id": original_doc["_id"]})
         self.assertEqual(updated["email"], "ana.editada@example.com")
 
+    def test_delete_selected_document_removes_document(self):
+        self.window.db.create_collection("users")
+        original_doc = {
+            "_id": ObjectId("68b0292c25470b54385c4738"),
+            "name": "Ana",
+            "email": "ana@example.com",
+            "active": True,
+        }
+        self.window.db["users"].insert_one(original_doc.copy())
+        self.window.current_collection = "users"
+        self.window.show_collection_data = lambda *_args, **_kwargs: None
+
+        class DataTable:
+            def currentRow(self):
+                return 0
+
+            def item(self, row, column):
+                if row != 0 or column != 0:
+                    return None
+                return FakeTableItem(str(original_doc["_id"]))
+
+        self.window.data_table = DataTable()
+
+        with patch.object(collection_views_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(collection_views_mixin.QMessageBox, "critical", return_value=None), \
+             patch.object(collection_views_mixin.QMessageBox, "question", return_value=collection_views_mixin.QMessageBox.StandardButton.Yes):
+            self.window.delete_selected_document()
+
+        self.assertIsNone(self.window.db["users"].find_one({"_id": original_doc["_id"]}))
+
     def test_show_global_stats(self):
         self.window.client = FakeClient({"sales": FakeDB(), "ops": FakeDB(), "admin": FakeDB()})
         self.window.client._databases["sales"].create_collection("orders")

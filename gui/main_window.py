@@ -473,6 +473,11 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
         self.edit_record_button.clicked.connect(self.edit_selected_document)
         data_actions_layout.addWidget(self.edit_record_button)
 
+        self.delete_record_button = QPushButton("Eliminar registro")
+        self.delete_record_button.setToolTip("Eliminar el registro seleccionado en la colección actual")
+        self.delete_record_button.clicked.connect(self.delete_selected_document)
+        data_actions_layout.addWidget(self.delete_record_button)
+
         data_tab_layout.addLayout(data_actions_layout)
         
         self.collection_view_tabs.addTab(data_tab, "Datos")
