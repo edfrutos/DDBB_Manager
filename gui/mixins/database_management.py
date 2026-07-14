@@ -151,7 +151,7 @@ class DatabaseManagementMixin:
         owners_cache = {}
 
         try:
-            if not self.db:
+            if self.db is None:
                 return {}
 
             collections = self.db.list_collection_names()

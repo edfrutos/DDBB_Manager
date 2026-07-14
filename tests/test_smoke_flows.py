@@ -1053,6 +1053,34 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.find_collection_owner("orders")["cargo"], "Owner")
         self.assertEqual(self.window.find_collection_owner("archive")["email"], "owner@example.com")
 
+    def test_get_all_collection_owners_with_boolless_database(self):
+        class BoollessDB:
+            def __init__(self, backing):
+                self._backing = backing
+
+            def __bool__(self):
+                raise AssertionError("Database object should not be evaluated as bool")
+
+            def __getitem__(self, key):
+                return self._backing[key]
+
+            def list_collection_names(self):
+                return self._backing.list_collection_names()
+
+        backing_db = FakeDB()
+        backing_db.create_collection("orders")
+        backing_db["orders"].insert_one({
+            "type": "metadata",
+            "owner": "Equipo Ventas",
+            "email": "ventas@example.com",
+        })
+
+        self.window.db = BoollessDB(backing_db)
+        owners = self.window.get_all_collection_owners()
+
+        self.assertEqual(owners["orders"]["nombre"], "Equipo Ventas")
+        self.assertEqual(owners["orders"]["email"], "ventas@example.com")
+
     def test_show_global_stats(self):
         self.window.client = FakeClient({"sales": FakeDB(), "ops": FakeDB(), "admin": FakeDB()})
         self.window.client._databases["sales"].create_collection("orders")
