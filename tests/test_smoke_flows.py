@@ -1121,6 +1121,168 @@ class SmokeFlowsTest(unittest.TestCase):
 
         self.assertEqual(captured["title"], "Propietarios de Colecciones - codex_smoke")
 
+    def test_view_table_owner_details_handles_collection_table_shape(self):
+        self.window.db.create_collection("orders")
+        self.window.db["orders"].insert_one({
+            "_id": ObjectId(),
+            "type": "metadata",
+            "owner": "Equipo Ventas",
+            "email": "ventas@example.com",
+            "department": "Sales",
+            "role": "Owner",
+        })
+
+        class OwnerResultsTable:
+            def currentRow(self):
+                return 0
+
+            def item(self, row, column):
+                values = {
+                    0: "orders",
+                    1: "Equipo Ventas",
+                    2: "ventas@example.com",
+                    3: "Sales",
+                    4: "Owner",
+                }
+                value = values.get(column)
+                return None if value is None else FakeTableItem(value)
+
+        class DetailDialog:
+            def __init__(self, *_args, **_kwargs):
+                self.title = None
+                self.accepted = False
+
+            def setWindowTitle(self, value):
+                self.title = value
+
+            def resize(self, *_args):
+                pass
+
+            def exec(self):
+                self.accepted = True
+
+            def accept(self):
+                self.accepted = True
+
+        class FakeGroupBox:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+        class FakeFormLayout:
+            def __init__(self, *_args, **_kwargs):
+                self.rows = []
+
+            def addRow(self, *_args, **_kwargs):
+                self.rows.append((_args, _kwargs))
+
+        class DetailLabel:
+            def __init__(self, text=""):
+                self.text_value = text
+
+            def setTextFormat(self, *_args, **_kwargs):
+                pass
+
+        class FakeListWidget:
+            def __init__(self, *_args, **_kwargs):
+                self.items = []
+
+            def addItem(self, value):
+                self.items.append(value)
+
+            def addItems(self, values):
+                self.items.extend(values)
+
+        class FakeButton:
+            def __init__(self, *_args, **_kwargs):
+                self.clicked = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+            def setStyleSheet(self, *_args, **_kwargs):
+                pass
+
+        captured = {"warnings": []}
+
+        with patch.object(db_mixin, "QDialog", DetailDialog), \
+             patch.object(db_mixin, "QVBoxLayout", FakeVBoxLayout), \
+             patch.object(db_mixin, "QGroupBox", FakeGroupBox), \
+             patch.object(db_mixin, "QFormLayout", FakeFormLayout), \
+             patch.object(db_mixin, "QLabel", DetailLabel), \
+             patch.object(db_mixin, "QListWidget", FakeListWidget), \
+             patch.object(db_mixin, "QPushButton", FakeButton), \
+             patch.object(db_mixin.QMessageBox, "warning", side_effect=lambda *args, **kwargs: captured["warnings"].append(args)), \
+             patch.object(db_mixin.QMessageBox, "critical", return_value=None):
+            self.window.view_table_owner_details(OwnerResultsTable())
+
+        self.assertFalse(captured["warnings"])
+
+    def test_show_database_details_uses_single_dbstats_call(self):
+        class StatsDB(FakeDB):
+            def __init__(self):
+                super().__init__()
+                self.commands = []
+
+            def command(self, cmd, collection_name=None):
+                self.commands.append((cmd, collection_name))
+                return super().command(cmd, collection_name)
+
+        stats_db = StatsDB()
+        stats_db.create_collection("orders")
+        stats_db["orders"].insert_one({"_id": 1})
+        self.window.client = FakeClient({"sales": stats_db})
+
+        class DatabaseTable:
+            def currentRow(self):
+                return 0
+
+            def item(self, row, column):
+                if column != 0:
+                    return None
+                return FakeTableItem("sales")
+
+        class DetailDialog:
+            def __init__(self, *_args, **_kwargs):
+                self.title = None
+
+            def setWindowTitle(self, value):
+                self.title = value
+
+            def resize(self, *_args):
+                pass
+
+            def exec(self):
+                return 0
+
+        class DetailLabel:
+            def __init__(self, text=""):
+                self.text_value = text
+
+            def setTextFormat(self, *_args, **_kwargs):
+                pass
+
+        class FakeListWidget:
+            def __init__(self, *_args, **_kwargs):
+                self.items = []
+
+            def addItem(self, value):
+                self.items.append(value)
+
+        class FakeButton:
+            def __init__(self, *_args, **_kwargs):
+                self.clicked = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+        captured = {"warnings": []}
+
+        with patch.object(db_mixin, "QDialog", DetailDialog), \
+             patch.object(db_mixin, "QVBoxLayout", FakeVBoxLayout), \
+             patch.object(db_mixin, "QLabel", DetailLabel), \
+             patch.object(db_mixin, "QListWidget", FakeListWidget), \
+             patch.object(db_mixin, "QPushButton", FakeButton), \
+             patch.object(db_mixin.QMessageBox, "warning", side_effect=lambda *args, **kwargs: captured["warnings"].append(args)), \
+             patch.object(db_mixin.QMessageBox, "critical", return_value=None):
+            self.window.show_database_details(DatabaseTable())
+
+        self.assertFalse(captured["warnings"])
+        self.assertEqual([cmd for cmd, _collection in stats_db.commands], ["dbStats"])
+
     def test_show_global_stats(self):
         self.window.client = FakeClient({"sales": FakeDB(), "ops": FakeDB(), "admin": FakeDB()})
         self.window.client._databases["sales"].create_collection("orders")

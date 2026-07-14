@@ -962,18 +962,32 @@ Total de bases de datos: {len(databases)}""")
         """Mostrar información detallada del propietario de la tabla/colección seleccionada"""
         try:
             # Verificar si hay una fila seleccionada
+            if results_table is None:
+                QMessageBox.warning(self, "Advertencia", "No hay una tabla disponible para mostrar detalles")
+                return
+
             selected_row = results_table.currentRow()
             if selected_row < 0:
                 QMessageBox.warning(self, "Advertencia", "Por favor, seleccione una tabla/colección para ver sus detalles")
                 return
 
-            # Obtener información de la fila seleccionada
-            db_name = results_table.item(selected_row, 0).text()
-            collection_name = results_table.item(selected_row, 1).text()
-            owner_name = results_table.item(selected_row, 2).text()
-            owner_email = results_table.item(selected_row, 3).text()
-            owner_dept = results_table.item(selected_row, 4).text()
-            creation_date = results_table.item(selected_row, 5).text()
+            def _cell_text(column, default=""):
+                item = results_table.item(selected_row, column)
+                return item.text().strip() if item is not None else default
+
+            # El diálogo de propietarios usa 5 columnas. La base de datos actual es implícita.
+            db_name = getattr(self, "database_name", "") or ""
+            collection_name = _cell_text(0)
+            owner_name = _cell_text(1, "Desconocido")
+            owner_email = _cell_text(2, "N/A")
+            owner_dept = _cell_text(3, "N/A")
+            owner_role = _cell_text(4, "N/A")
+
+            if not collection_name:
+                QMessageBox.warning(self, "Advertencia", "No se pudo identificar la colección seleccionada")
+                return
+
+            creation_date = "N/A"
 
             # Crear diálogo para mostrar detalles
             detail_dialog = QDialog(self)
@@ -1026,13 +1040,14 @@ Total de bases de datos: {len(databases)}""")
             owner_layout.addRow("<b>Nombre:</b>", QLabel(owner_name))
             owner_layout.addRow("<b>Email:</b>", QLabel(owner_email))
             owner_layout.addRow("<b>Departamento:</b>", QLabel(owner_dept))
+            owner_layout.addRow("<b>Cargo:</b>", QLabel(owner_role))
 
             # Buscar información adicional del propietario en la base de datos
             try:
                 additional_info = {}
 
                 # Buscar en la base de datos del propietario
-                if db_name in self.client.list_database_names():
+                if self.client is not None and db_name and db_name in self.client.list_database_names():
                     db = self.client[db_name]
 
                     # Buscar en colecciones típicas de usuarios/propietarios
@@ -1080,7 +1095,7 @@ Total de bases de datos: {len(databases)}""")
             # Intentar buscar información de acceso en registros de auditoría
             try:
                 access_logs = []
-                if db_name in self.client.list_database_names():
+                if self.client is not None and db_name and db_name in self.client.list_database_names():
                     db = self.client[db_name]
 
                     if 'audit_log' in db.list_collection_names():
@@ -1222,16 +1237,27 @@ Total de bases de datos: {len(databases)}""")
         """Mostrar estadísticas y detalles de la base de datos seleccionada"""
         try:
             # Verificar si hay una fila seleccionada
-            if not table or table.currentRow() < 0:
+            if table is None or table.currentRow() < 0:
                 QMessageBox.warning(self, "Advertencia", "Por favor, seleccione una base de datos primero")
                 return
 
             # Obtener el nombre de la base de datos
-            db_name = table.item(table.currentRow(), 0).text()
+            selected_item = table.item(table.currentRow(), 0)
+            if selected_item is None:
+                QMessageBox.warning(self, "Advertencia", "No se pudo identificar la base de datos seleccionada")
+                return
+
+            db_name = selected_item.text().strip()
+            if not db_name:
+                QMessageBox.warning(self, "Advertencia", "No se pudo identificar la base de datos seleccionada")
+                return
+
+            if self.client is None:
+                QMessageBox.warning(self, "Advertencia", "No hay conexión al servidor MongoDB")
+                return
 
             # Obtener estadísticas de la base de datos
             db = self.client[db_name]
-            stats = db.command("dbStats")
             stats = db.command("dbStats")
 
             # Crear diálogo para mostrar detalles
