@@ -515,6 +515,60 @@ class CollectionViewMixin:
             QMessageBox.critical(self, "Error", f"Error al eliminar el registro: {str(e)}")
             traceback.print_exc()
 
+    def insert_new_document(self):
+        """Crear un nuevo documento en la colección actual desde un editor JSON."""
+        try:
+            if self.db is None:
+                QMessageBox.warning(self, "Advertencia", "No hay conexión a la base de datos")
+                return
+
+            if not getattr(self, "current_collection", None):
+                QMessageBox.warning(self, "Advertencia", "Seleccione una colección primero")
+                return
+
+            insert_dialog = QDialog(self)
+            insert_dialog.setWindowTitle(f"Nuevo Registro - {self.current_collection}")
+            insert_dialog.resize(800, 600)
+
+            layout = QVBoxLayout(insert_dialog)
+            layout.addWidget(QLabel("Introduzca el documento en formato JSON. Si omite _id, MongoDB lo generará."))
+
+            editor = QPlainTextEdit()
+            editor.setPlainText("{\n  \n}")
+            layout.addWidget(editor)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(insert_dialog.accept)
+            buttons.rejected.connect(insert_dialog.reject)
+            layout.addWidget(buttons)
+
+            if insert_dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            try:
+                new_document = json_util.loads(editor.toPlainText())
+            except Exception as parse_error:
+                QMessageBox.critical(self, "Error", f"El JSON introducido no es válido: {str(parse_error)}")
+                return
+
+            if not isinstance(new_document, dict):
+                QMessageBox.warning(self, "Advertencia", "El documento debe ser un objeto JSON")
+                return
+
+            collection = self.db[self.current_collection]
+            try:
+                result = collection.insert_one(new_document)
+            except Exception as insert_error:
+                QMessageBox.critical(self, "Error", f"No se pudo crear el registro: {str(insert_error)}")
+                return
+
+            self.show_collection_data(self.current_collection, limit=100, with_metadata=True)
+            self.show_status_message(f"Registro creado en '{self.current_collection}' ({result.inserted_id})")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al crear el registro: {str(e)}")
+            traceback.print_exc()
+
     def show_collection_data(self, collection_name, limit=100, with_metadata=False):
         """Show data from the specified collection in the data table."""
         try:

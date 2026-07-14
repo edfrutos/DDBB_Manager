@@ -1480,6 +1480,69 @@ class SmokeFlowsTest(unittest.TestCase):
 
         self.assertIsNone(self.window.db["users"].find_one({"_id": original_doc["_id"]}))
 
+    def test_insert_new_document_creates_document(self):
+        self.window.db.create_collection("users")
+        self.window.current_collection = "users"
+        self.window.show_collection_data = lambda *_args, **_kwargs: None
+
+        class InsertDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                self.accepted = True
+
+            def setWindowTitle(self, *_args, **_kwargs):
+                pass
+
+            def resize(self, *_args):
+                pass
+
+            def exec(self):
+                return self.DialogCode.Accepted
+
+            def accept(self):
+                self.accepted = True
+
+            def reject(self):
+                self.accepted = False
+
+        class EditorWidget:
+            def __init__(self):
+                self.value = ""
+
+            def setPlainText(self, value):
+                self.value = value
+
+            def toPlainText(self):
+                payload = json_util.loads(self.value)
+                payload["name"] = "Nuevo"
+                payload["email"] = "nuevo@example.com"
+                return json_util.dumps(payload)
+
+        class ButtonBox:
+            class StandardButton:
+                Save = 1
+                Cancel = 2
+
+            def __init__(self, *_args, **_kwargs):
+                self.accepted = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.rejected = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+        with patch.object(collection_views_mixin, "QDialog", InsertDialog), \
+             patch.object(collection_views_mixin, "QPlainTextEdit", EditorWidget), \
+             patch.object(collection_views_mixin, "QDialogButtonBox", ButtonBox), \
+             patch.object(collection_views_mixin, "QVBoxLayout", FakeVBoxLayout), \
+             patch.object(collection_views_mixin, "QLabel", lambda *_args, **_kwargs: SimpleNamespace()), \
+             patch.object(collection_views_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(collection_views_mixin.QMessageBox, "critical", return_value=None):
+            self.window.insert_new_document()
+
+        self.assertEqual(self.window.db["users"].count_documents({}), 1)
+        created = self.window.db["users"].find_one({"name": "Nuevo"})
+        self.assertIsNotNone(created)
+        self.assertEqual(created["email"], "nuevo@example.com")
+
     def test_show_global_stats(self):
         self.window.client = FakeClient({"sales": FakeDB(), "ops": FakeDB(), "admin": FakeDB()})
         self.window.client._databases["sales"].create_collection("orders")
