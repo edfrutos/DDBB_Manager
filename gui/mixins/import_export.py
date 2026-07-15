@@ -1,12 +1,11 @@
 import csv
-import json
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 try:
-    from bson.objectid import ObjectId
+    from bson import json_util
 except ImportError:
-    ObjectId = None
+    json_util = None
 
 from ..dialogs import ImportDialog, ExportDialog
 
@@ -51,8 +50,10 @@ class ImportExportMixin:
         try:
             if file_path.lower().endswith('.json'):
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    import json
-                    data = json.load(f)
+                    data = json_util.loads(f.read()) if json_util is not None else None
+
+                    if data is None:
+                        raise ImportError("bson.json_util is not available")
 
                     # Get or create collection
                     collection = self.db[target_collection]
@@ -192,11 +193,8 @@ class ImportExportMixin:
             # Export based on format
             if export_format == "json":
                 # Export as JSON
-                import json
-
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    # Convert ObjectId to string for JSON serialization
-                    json.dump(documents, f, default=str, indent=2)
+                    f.write(json_util.dumps(documents, indent=2))
 
                 self.show_status_message(f"Exported {len(documents)} documents to {file_path}")
 

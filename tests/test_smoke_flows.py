@@ -4,6 +4,7 @@ import unittest
 import tempfile
 import hashlib
 import csv
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -683,36 +684,60 @@ class SmokeFlowsTest(unittest.TestCase):
 
             self.window.search_user()
 
+    def test_edit_selected_user_routes_to_edit_user(self):
+        users = [{
+            "_id": ObjectId("507f1f77bcf86cd799439011"),
+            "name": "Ada Lovelace",
+            "_source_collection": "users_unified",
+        }]
+        table = SimpleNamespace(currentRow=lambda: 0)
+        dialog = SimpleNamespace(accepted=False, accept=lambda: setattr(dialog, "accepted", True))
+
+        with patch.object(self.window, "edit_user") as mock_edit_user, \
+             patch.object(user_mixin.QMessageBox, "warning", return_value=None):
+            self.window.edit_selected_user(table, users, dialog)
+
+        mock_edit_user.assert_called_once_with(users[0]["_id"], "users_unified")
+        self.assertTrue(dialog.accepted)
+
     def test_import_export_json_round_trip(self):
         source = self.window.db.create_collection("source")
-        source.insert_one({"_id": "1", "name": "uno"})
-        source.insert_one({"_id": "2", "name": "dos"})
+        source.insert_one({
+            "_id": ObjectId("507f1f77bcf86cd799439011"),
+            "name": "uno",
+            "created_at": datetime(2026, 7, 14, 10, 30, tzinfo=timezone.utc),
+        })
+        source.insert_one({
+            "_id": ObjectId("507f1f77bcf86cd799439012"),
+            "name": "dos",
+            "created_at": datetime(2026, 7, 14, 11, 0, tzinfo=timezone.utc),
+        })
 
         with tempfile.TemporaryDirectory() as tmpdir:
             export_path = Path(tmpdir, "source.json")
-            import_path = Path(tmpdir, "import.json")
-            import_path.write_text(json.dumps([
-                {"_id": "10", "name": "diez"},
-                {"_id": "11", "name": "once"},
-            ]), encoding="utf-8")
 
             with patch.object(import_export_mixin, "ExportDialog", lambda parent, collections: FakeExportDialog(parent, collections, "source", "json")), \
                  patch.object(import_export_mixin, "ImportDialog", lambda parent, collections: FakeImportDialog(parent, collections, "target", True)), \
                  patch.object(import_export_mixin.QFileDialog, "getSaveFileName", return_value=(str(export_path), "JSON Files (*.json)")), \
-                 patch.object(import_export_mixin.QFileDialog, "getOpenFileName", return_value=(str(import_path), "JSON Files (*.json)")), \
+                 patch.object(import_export_mixin.QFileDialog, "getOpenFileName", return_value=(str(export_path), "JSON Files (*.json)")), \
                  patch.object(import_export_mixin.QMessageBox, "information", return_value=None), \
                  patch.object(import_export_mixin.QMessageBox, "warning", return_value=None), \
                  patch.object(import_export_mixin.QMessageBox, "critical", return_value=None):
 
                 self.window.export_data()
                 self.assertTrue(export_path.exists())
-                exported = json.loads(export_path.read_text(encoding="utf-8"))
+                exported = json_util.loads(export_path.read_text(encoding="utf-8"))
                 self.assertEqual(len(exported), 2)
                 self.assertEqual(exported[0]["name"], "uno")
+                self.assertIsInstance(exported[0]["_id"], ObjectId)
+                self.assertEqual(exported[0]["created_at"].utcoffset().total_seconds(), 0)
 
                 self.window.import_data()
                 self.assertEqual(self.window.db["target"].count_documents({}), 2)
-                self.assertEqual(self.window.db["target"].find_one({"_id": "10"})["name"], "diez")
+                imported = self.window.db["target"].find_one({"_id": ObjectId("507f1f77bcf86cd799439011")})
+                self.assertIsNotNone(imported)
+                self.assertEqual(imported["name"], "uno")
+                self.assertEqual(imported["created_at"].utcoffset().total_seconds(), 0)
 
     def test_import_export_csv_round_trip(self):
         with tempfile.TemporaryDirectory() as tmpdir:
