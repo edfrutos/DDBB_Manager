@@ -929,9 +929,15 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertGreaterEqual(relations_tree.topLevelItemCount(), 1)
         source_item = relations_tree.topLevelItem(0)
         self.assertEqual(source_item.text(0), "orders")
-        self.assertGreaterEqual(source_item.childCount(), 1)
-        relation_item = source_item.child(0)
+        self.assertEqual(source_item.childCount(), 2)
+
+        outgoing_item = source_item.child(0)
+        self.assertEqual(outgoing_item.text(0), "Referencias salientes")
+        self.assertGreaterEqual(outgoing_item.childCount(), 1)
+
+        relation_item = outgoing_item.child(0)
         self.assertEqual(relation_item.text(0), "users")
+        self.assertEqual(relation_item.text(1), "Referencia saliente")
         self.assertIn("user_id", relation_item.text(2))
 
         opened = {}

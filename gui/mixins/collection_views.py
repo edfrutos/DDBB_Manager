@@ -161,7 +161,8 @@ class CollectionViewMixin:
                 return
 
             other_collections = [name for name in self.db.list_collection_names() if name != collection_name]
-            relations = {}
+            outgoing_relations = {}
+            incoming_relations = {}
 
             try:
                 from bson.objectid import ObjectId
@@ -190,6 +191,11 @@ class CollectionViewMixin:
                     return [value]
                 return candidates
 
+            current_id_candidates = set()
+            for doc in sample_docs:
+                for candidate in candidate_ids(doc.get("_id")):
+                    current_id_candidates.add(candidate)
+
             for doc in sample_docs:
                 for field, value in doc.items():
                     if field == "_id":
@@ -215,7 +221,7 @@ class CollectionViewMixin:
                                     continue
 
                                 key = (field, related_collection_name)
-                                relation = relations.setdefault(
+                                relation = outgoing_relations.setdefault(
                                     key,
                                     {
                                         "count": 0,
@@ -227,34 +233,71 @@ class CollectionViewMixin:
                                     relation["examples"].append(str(raw_value))
                                 break
 
-            if not relations:
+            for related_collection_name in other_collections:
+                related_collection = self.db[related_collection_name]
+                try:
+                    related_docs = list(related_collection.find().limit(100))
+                except Exception:
+                    related_docs = []
+
+                for doc in related_docs:
+                    for field, value in doc.items():
+                        if field == "_id":
+                            continue
+
+                        values = value if isinstance(value, list) else [value]
+                        for raw_value in values:
+                            for candidate in candidate_ids(raw_value):
+                                if candidate not in current_id_candidates:
+                                    continue
+
+                                key = (field, related_collection_name)
+                                relation = incoming_relations.setdefault(
+                                    key,
+                                    {
+                                        "count": 0,
+                                        "examples": [],
+                                    },
+                                )
+                                relation["count"] += 1
+                                if len(relation["examples"]) < 3:
+                                    relation["examples"].append(str(raw_value))
+                                break
+
+            if not outgoing_relations and not incoming_relations:
                 empty_item = QTreeWidgetItem(["Sin relaciones detectadas", "Referencia no encontrada", "No se detectaron vínculos entre colecciones"])
                 self.tables_tree.addTopLevelItem(empty_item)
                 self.tables_tree.expandAll()
                 return
 
-            grouped = {}
-            for (field, related_collection_name), info in relations.items():
-                grouped.setdefault(related_collection_name, []).append((field, info))
-
-            source_item = QTreeWidgetItem([collection_name, "Origen", f"{len(grouped)} colecciones relacionadas"])
+            source_item = QTreeWidgetItem([collection_name, "Colección activa", "Relaciones detectadas por referencia"])
+            outgoing_item = QTreeWidgetItem(["Referencias salientes", "Campo -> otra colección", str(len(outgoing_relations))])
+            incoming_item = QTreeWidgetItem(["Referencias entrantes", "Otra colección -> campo", str(len(incoming_relations))])
             self.tables_tree.addTopLevelItem(source_item)
+            source_item.addChild(outgoing_item)
+            source_item.addChild(incoming_item)
 
-            for related_collection_name in sorted(grouped.keys()):
-                field_summaries = []
-                total_hits = 0
-                for field, info in sorted(grouped[related_collection_name], key=lambda item: item[0]):
-                    total_hits += info["count"]
-                    example_text = ", ".join(info["examples"]) if info["examples"] else "sin ejemplos"
-                    field_summaries.append(f"{field}: {info['count']} coincidencias ({example_text})")
+            def add_relation_children(parent_item, relations_map, label):
+                grouped = {}
+                for (field, related_collection_name), info in relations_map.items():
+                    grouped.setdefault(related_collection_name, []).append((field, info))
 
-                relation_item = QTreeWidgetItem([
-                    related_collection_name,
-                    "Referencia inferida",
-                    " | ".join(field_summaries),
-                ])
-                relation_item.setData(0, Qt.ItemDataRole.UserRole, related_collection_name)
-                source_item.addChild(relation_item)
+                for related_collection_name in sorted(grouped.keys()):
+                    field_summaries = []
+                    for field, info in sorted(grouped[related_collection_name], key=lambda item: item[0]):
+                        example_text = ", ".join(info["examples"]) if info["examples"] else "sin ejemplos"
+                        field_summaries.append(f"{field}: {info['count']} coincidencias ({example_text})")
+
+                    relation_item = QTreeWidgetItem([
+                        related_collection_name,
+                        label,
+                        " | ".join(field_summaries),
+                    ])
+                    relation_item.setData(0, Qt.ItemDataRole.UserRole, related_collection_name)
+                    parent_item.addChild(relation_item)
+
+            add_relation_children(outgoing_item, outgoing_relations, "Referencia saliente")
+            add_relation_children(incoming_item, incoming_relations, "Referencia entrante")
 
             self.tables_tree.expandAll()
 
