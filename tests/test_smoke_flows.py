@@ -934,6 +934,12 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(relation_item.text(0), "users")
         self.assertIn("user_id", relation_item.text(2))
 
+        opened = {}
+        self.window.show_collection_data = lambda collection_name, **kwargs: opened.setdefault("collection", collection_name)
+        self.window.open_relation_collection(relation_item, 0)
+        self.assertEqual(opened.get("collection"), "users")
+        self.assertEqual(self.window.current_collection, "users")
+
     def test_show_collections_populates_real_tree_widget(self):
         class BoollessDB:
             def __init__(self, backing):

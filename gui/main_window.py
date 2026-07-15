@@ -502,6 +502,7 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
         self.tables_tree = QTreeWidget()
         self.tables_tree.setHeaderLabels(["Tabla", "Tipo", "Campos"])
         self.tables_tree.setAlternatingRowColors(True)
+        self.tables_tree.itemDoubleClicked.connect(self.open_relation_collection)
         tables_layout.addWidget(self.tables_tree)
         
         self.collection_view_tabs.addTab(tables_tab, "Relaciones de Tablas")
@@ -1157,6 +1158,9 @@ Ejemplos de consultas:
         
     def detect_collection_content_type(self, collection_name):
         return super().detect_collection_content_type(collection_name)
+
+    def open_relation_collection(self, item, column=0):
+        return super().open_relation_collection(item, column)
     
     def get_field_description(self, field_name):
         return super().get_field_description(field_name)

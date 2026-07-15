@@ -253,12 +253,37 @@ class CollectionViewMixin:
                     "Referencia inferida",
                     " | ".join(field_summaries),
                 ])
+                relation_item.setData(0, Qt.ItemDataRole.UserRole, related_collection_name)
                 source_item.addChild(relation_item)
 
             self.tables_tree.expandAll()
 
         except Exception as e:
             print(f"Error al cargar relaciones de colección: {e}")
+            traceback.print_exc()
+
+    def open_relation_collection(self, item, column=0):
+        """Open the collection represented by a relation-tree item."""
+        try:
+            if item is None or self.db is None:
+                return
+
+            collection_name = item.data(0, Qt.ItemDataRole.UserRole)
+            if not collection_name:
+                collection_name = item.text(0).strip()
+
+            if not collection_name or collection_name not in self.db.list_collection_names():
+                return
+
+            self.current_collection = collection_name
+            self.show_collection_data(collection_name, limit=100, with_metadata=True)
+
+            if hasattr(self, "collection_view_tabs"):
+                self.collection_view_tabs.setCurrentIndex(0)
+
+            self.show_status_message(f"Mostrando datos de {collection_name}")
+        except Exception as e:
+            print(f"Error al abrir la relación de colección: {e}")
             traceback.print_exc()
 
     def show_collections(self):
