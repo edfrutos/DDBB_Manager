@@ -700,6 +700,37 @@ class SmokeFlowsTest(unittest.TestCase):
         mock_edit_user.assert_called_once_with(users[0]["_id"], "users_unified")
         self.assertTrue(dialog.accepted)
 
+    def test_normalize_user_id_and_search_string_id(self):
+        self.assertEqual(self.window._normalize_user_id("user-123"), "user-123")
+        self.assertEqual(
+            self.window._normalize_user_id("507f1f77bcf86cd799439011"),
+            ObjectId("507f1f77bcf86cd799439011"),
+        )
+
+        self.window.db.create_collection("users_unified")
+        self.window.db["users_unified"].insert_one({
+            "_id": "user-123",
+            "name": "String ID User",
+            "email": "string@example.com",
+        })
+
+        captured = {}
+
+        with patch.object(user_mixin.QDialog, "exec", return_value=QDialog.DialogCode.Accepted), \
+             patch.object(user_mixin, "QComboBox", FakeComboBox), \
+             patch.object(user_mixin, "QLineEdit", lambda: FakeLineEdit("user-123")), \
+             patch.object(user_mixin.QFormLayout, "addRow", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "warning", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "information", return_value=None), \
+             patch.object(user_mixin.QMessageBox, "critical", return_value=None), \
+             patch.object(self.window, "show_user_results", lambda users: captured.setdefault("users", users)):
+
+            self.window.search_user()
+
+        self.assertIn("users", captured)
+        self.assertEqual(len(captured["users"]), 1)
+        self.assertEqual(captured["users"][0]["_id"], "user-123")
+
     def test_import_export_json_round_trip(self):
         source = self.window.db.create_collection("source")
         source.insert_one({

@@ -18,6 +18,15 @@ from ..dialogs import PasswordManageDialog
 class UserManagementMixin:
     """Métodos de gestión de usuarios para MainWindow."""
 
+    def _normalize_user_id(self, user_id):
+        """Return an ObjectId when possible, otherwise keep the original id."""
+        if isinstance(user_id, str) and ObjectId is not None:
+            try:
+                return ObjectId(user_id)
+            except Exception:
+                return user_id
+        return user_id
+
     def list_users(self):
         """List all users from the unified users collection"""
         if self.db is None:
@@ -135,12 +144,7 @@ class UserManagementMixin:
 
         try:
             if search_type.currentText() == "Por ID":
-                from bson.objectid import ObjectId
-                try:
-                    query = {'_id': ObjectId(text)}
-                except Exception:
-                    QMessageBox.warning(self, "Advertencia", "ID de usuario no válido")
-                    return
+                query = {'_id': self._normalize_user_id(text)}
             elif search_type.currentText() == "Por Nombre":
                 query = {'$or': [
                     {'nombre': {'$regex': text, '$options': 'i'}},
@@ -252,9 +256,7 @@ class UserManagementMixin:
                 return
 
             # Obtener documento del usuario
-            from bson.objectid import ObjectId
-            if isinstance(user_id, str):
-                user_id = ObjectId(user_id)
+            user_id = self._normalize_user_id(user_id)
 
             user = self.db[collection_name].find_one({'_id': user_id})
             if not user:
@@ -379,9 +381,7 @@ class UserManagementMixin:
                 return
 
             # Eliminar usuario
-            from bson.objectid import ObjectId
-            if isinstance(user_id, str):
-                user_id = ObjectId(user_id)
+            user_id = self._normalize_user_id(user_id)
 
             result = self.db[collection_name].delete_one({'_id': user_id})
 
