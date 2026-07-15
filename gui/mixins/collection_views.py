@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QStyle,
     QTableWidget,
     QTableWidgetItem,
+    QTreeWidgetItem,
     QTreeView,
     QVBoxLayout,
 )
@@ -138,6 +139,127 @@ class CollectionViewMixin:
 
         populate_rows()
         return dialog, table, build_document, add_blank_row
+
+    def load_collection_relations(self, collection_name):
+        """Populate the relations tab with inferred references to other collections."""
+        try:
+            if not hasattr(self, "tables_tree") or self.tables_tree is None:
+                return
+
+            self.tables_tree.clear()
+            self.tables_tree.setHeaderLabels(["Tabla", "Tipo", "Campos"])
+
+            if self.db is None or collection_name not in self.db.list_collection_names():
+                return
+
+            source_collection = self.db[collection_name]
+            sample_docs = list(source_collection.find().limit(100))
+            if not sample_docs:
+                empty_item = QTreeWidgetItem(["Sin relaciones detectadas", "Colección vacía", "No hay datos para analizar"])
+                self.tables_tree.addTopLevelItem(empty_item)
+                self.tables_tree.expandAll()
+                return
+
+            other_collections = [name for name in self.db.list_collection_names() if name != collection_name]
+            relations = {}
+
+            try:
+                from bson.objectid import ObjectId
+            except ImportError:
+                ObjectId = None
+
+            def candidate_ids(value):
+                candidates = []
+                if value is None:
+                    return candidates
+                if ObjectId is not None and isinstance(value, ObjectId):
+                    candidates.append(value)
+                    candidates.append(str(value))
+                    return candidates
+                if isinstance(value, str):
+                    text = value.strip()
+                    if text:
+                        candidates.append(text)
+                        if ObjectId is not None:
+                            try:
+                                candidates.append(ObjectId(text))
+                            except Exception:
+                                pass
+                    return candidates
+                if isinstance(value, (int, float, bool)):
+                    return [value]
+                return candidates
+
+            for doc in sample_docs:
+                for field, value in doc.items():
+                    if field == "_id":
+                        continue
+
+                    values = value if isinstance(value, list) else [value]
+                    for raw_value in values:
+                        for candidate in candidate_ids(raw_value):
+                            for related_collection_name in other_collections:
+                                related_collection = self.db[related_collection_name]
+                                try:
+                                    match = related_collection.find_one({"_id": candidate})
+                                except Exception:
+                                    match = None
+
+                                if match is None and isinstance(candidate, str) and ObjectId is not None:
+                                    try:
+                                        match = related_collection.find_one({"_id": ObjectId(candidate)})
+                                    except Exception:
+                                        match = None
+
+                                if match is None:
+                                    continue
+
+                                key = (field, related_collection_name)
+                                relation = relations.setdefault(
+                                    key,
+                                    {
+                                        "count": 0,
+                                        "examples": [],
+                                    },
+                                )
+                                relation["count"] += 1
+                                if len(relation["examples"]) < 3:
+                                    relation["examples"].append(str(raw_value))
+                                break
+
+            if not relations:
+                empty_item = QTreeWidgetItem(["Sin relaciones detectadas", "Referencia no encontrada", "No se detectaron vínculos entre colecciones"])
+                self.tables_tree.addTopLevelItem(empty_item)
+                self.tables_tree.expandAll()
+                return
+
+            grouped = {}
+            for (field, related_collection_name), info in relations.items():
+                grouped.setdefault(related_collection_name, []).append((field, info))
+
+            source_item = QTreeWidgetItem([collection_name, "Origen", f"{len(grouped)} colecciones relacionadas"])
+            self.tables_tree.addTopLevelItem(source_item)
+
+            for related_collection_name in sorted(grouped.keys()):
+                field_summaries = []
+                total_hits = 0
+                for field, info in sorted(grouped[related_collection_name], key=lambda item: item[0]):
+                    total_hits += info["count"]
+                    example_text = ", ".join(info["examples"]) if info["examples"] else "sin ejemplos"
+                    field_summaries.append(f"{field}: {info['count']} coincidencias ({example_text})")
+
+                relation_item = QTreeWidgetItem([
+                    related_collection_name,
+                    "Referencia inferida",
+                    " | ".join(field_summaries),
+                ])
+                source_item.addChild(relation_item)
+
+            self.tables_tree.expandAll()
+
+        except Exception as e:
+            print(f"Error al cargar relaciones de colección: {e}")
+            traceback.print_exc()
 
     def show_collections(self):
         """Mostrar las colecciones de la base de datos en el árbol, según el modo de vista activo."""
@@ -734,6 +856,9 @@ class CollectionViewMixin:
 
             if not documents_list:
                 self.show_status_message(f"Collection '{collection_name}' is empty")
+                self.load_collection_relations(collection_name)
+                if with_metadata:
+                    self.load_collection_metadata(collection_name)
                 return
 
             all_fields = set()
@@ -758,6 +883,8 @@ class CollectionViewMixin:
                 self.data_table.resizeColumnsToContents()
                 total_docs = collection.count_documents({})
                 self.show_status_message(f"Showing {min(limit, total_docs)} of {total_docs} documents in '{collection_name}'")
+
+                self.load_collection_relations(collection_name)
 
                 if with_metadata:
                     self.load_collection_metadata(collection_name)

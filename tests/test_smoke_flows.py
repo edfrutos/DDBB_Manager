@@ -912,6 +912,28 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(self.window.meta_access_table.items[(0, 1)], "Consulta")
         self.assertEqual(self.window.meta_access_table.items[(2, 0)], "Equipo Datos")
 
+    def test_collection_relations_tab_detects_foreign_key_like_links(self):
+        user_id = ObjectId("68b0292c25470b54385c4738")
+        self.window.db.create_collection("users")
+        self.window.db["users"].insert_one({"_id": user_id, "name": "Ada"})
+        self.window.db.create_collection("orders")
+        self.window.db["orders"].insert_one({
+            "_id": ObjectId("68b0292c25470b54385c4739"),
+            "order_number": "A-1",
+            "user_id": user_id,
+        })
+
+        self.window.show_collection_data("orders")
+
+        relations_tree = self.window.tables_tree
+        self.assertGreaterEqual(relations_tree.topLevelItemCount(), 1)
+        source_item = relations_tree.topLevelItem(0)
+        self.assertEqual(source_item.text(0), "orders")
+        self.assertGreaterEqual(source_item.childCount(), 1)
+        relation_item = source_item.child(0)
+        self.assertEqual(relation_item.text(0), "users")
+        self.assertIn("user_id", relation_item.text(2))
+
     def test_show_collections_populates_real_tree_widget(self):
         class BoollessDB:
             def __init__(self, backing):
