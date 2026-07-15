@@ -17,9 +17,9 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QMessageBox,
     QProgressDialog,
+    QPushButton,
     QStyle,
     QTableWidget,
     QTableWidgetItem,
@@ -30,6 +30,114 @@ from PyQt6.QtWidgets import (
 
 class CollectionViewMixin:
     """Métodos de visualización y navegación de colecciones para MainWindow."""
+
+    def _document_value_to_text(self, value):
+        if isinstance(value, str):
+            return value
+        try:
+            return json_util.dumps(value, default=str)
+        except Exception:
+            return str(value)
+
+    def _editor_text_to_value(self, text):
+        raw_text = text.strip()
+        if not raw_text:
+            return ""
+
+        try:
+            return json_util.loads(raw_text)
+        except Exception:
+            return raw_text
+
+    def _create_document_editor_dialog(self, title, document=None, allow_id_edit=False):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(900, 650)
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Edite los campos directamente en la tabla. Puede añadir o quitar filas para crear nuevos campos."))
+
+        table = QTableWidget()
+        table.setColumnCount(2)
+        table.setHorizontalHeaderLabels(["Campo", "Valor"])
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+
+        layout.addWidget(table)
+
+        button_row = QHBoxLayout()
+        add_field_button = QPushButton("Añadir campo")
+        remove_field_button = QPushButton("Eliminar campo")
+        button_row.addWidget(add_field_button)
+        button_row.addWidget(remove_field_button)
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        layout.addWidget(buttons)
+
+        def add_blank_row(field_name="", value_text=""):
+            row = table.rowCount()
+            table.insertRow(row)
+
+            field_item = QTableWidgetItem(str(field_name))
+            value_item = QTableWidgetItem(value_text)
+
+            if field_name == "_id" and not allow_id_edit:
+                field_item.setFlags(field_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+            table.setItem(row, 0, field_item)
+            table.setItem(row, 1, value_item)
+
+        def populate_rows():
+            table.setRowCount(0)
+            if document:
+                ordered_fields = ["_id"] + [key for key in document.keys() if key != "_id"]
+                for field in ordered_fields:
+                    add_blank_row(field, self._document_value_to_text(document.get(field, "")))
+            else:
+                add_blank_row()
+
+        def remove_selected_row():
+            selected_row = table.currentRow()
+            if selected_row >= 0:
+                table.removeRow(selected_row)
+
+        def build_document():
+            updated_document = {}
+            for row in range(table.rowCount()):
+                field_item = table.item(row, 0)
+                value_item = table.item(row, 1)
+                if field_item is None:
+                    continue
+
+                field_name = field_item.text().strip()
+                if not field_name:
+                    continue
+
+                value_text = value_item.text() if value_item is not None else ""
+                if field_name == "_id" and document is not None and not allow_id_edit:
+                    updated_document["_id"] = document["_id"]
+                    continue
+
+                updated_document[field_name] = self._editor_text_to_value(value_text)
+
+            if document is not None and "_id" in document and "_id" not in updated_document:
+                updated_document["_id"] = document["_id"]
+
+            return updated_document
+
+        add_field_button.clicked.connect(lambda: add_blank_row())
+        remove_field_button.clicked.connect(remove_selected_row)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        populate_rows()
+        return dialog, table, build_document, add_blank_row
 
     def show_collections(self):
         """Mostrar las colecciones de la base de datos en el árbol, según el modo de vista activo."""
@@ -410,32 +518,20 @@ class CollectionViewMixin:
                 QMessageBox.warning(self, "Advertencia", "No se encontró el documento seleccionado en la base de datos")
                 return
 
-            editor_dialog = QDialog(self)
-            editor_dialog.setWindowTitle(f"Editar Registro - {self.current_collection}")
-            editor_dialog.resize(800, 600)
-
-            layout = QVBoxLayout(editor_dialog)
-            layout.addWidget(QLabel("Edite el documento en formato JSON. El campo _id se mantiene protegido."))
-
-            editor = QPlainTextEdit()
-            editor.setPlainText(json_util.dumps(document, indent=2))
-            layout.addWidget(editor)
-
-            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-            buttons.accepted.connect(editor_dialog.accept)
-            buttons.rejected.connect(editor_dialog.reject)
-            layout.addWidget(buttons)
+            editor_dialog, editor_table, build_document, _add_row = self._create_document_editor_dialog(
+                f"Editar Registro - {self.current_collection}",
+                document=document,
+                allow_id_edit=False,
+            )
 
             if editor_dialog.exec() != QDialog.DialogCode.Accepted:
                 return
 
             try:
-                updated_document = json_util.loads(editor.toPlainText())
+                updated_document = build_document()
             except Exception as parse_error:
-                QMessageBox.critical(self, "Error", f"El JSON editado no es válido: {str(parse_error)}")
+                QMessageBox.critical(self, "Error", f"No se pudo leer el documento editado: {str(parse_error)}")
                 return
-
-            updated_document["_id"] = document["_id"]
 
             try:
                 result = collection.replace_one({"_id": document["_id"]}, updated_document)
@@ -526,34 +622,26 @@ class CollectionViewMixin:
                 QMessageBox.warning(self, "Advertencia", "Seleccione una colección primero")
                 return
 
-            insert_dialog = QDialog(self)
-            insert_dialog.setWindowTitle(f"Nuevo Registro - {self.current_collection}")
-            insert_dialog.resize(800, 600)
-
-            layout = QVBoxLayout(insert_dialog)
-            layout.addWidget(QLabel("Introduzca el documento en formato JSON. Si omite _id, MongoDB lo generará."))
-
-            editor = QPlainTextEdit()
-            editor.setPlainText("{\n  \n}")
-            layout.addWidget(editor)
-
-            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-            buttons.accepted.connect(insert_dialog.accept)
-            buttons.rejected.connect(insert_dialog.reject)
-            layout.addWidget(buttons)
+            insert_dialog, editor_table, build_document, add_row = self._create_document_editor_dialog(
+                f"Nuevo Registro - {self.current_collection}",
+                document=None,
+                allow_id_edit=True,
+            )
 
             if insert_dialog.exec() != QDialog.DialogCode.Accepted:
                 return
 
             try:
-                new_document = json_util.loads(editor.toPlainText())
+                new_document = build_document()
             except Exception as parse_error:
-                QMessageBox.critical(self, "Error", f"El JSON introducido no es válido: {str(parse_error)}")
+                QMessageBox.critical(self, "Error", f"No se pudo leer el documento nuevo: {str(parse_error)}")
                 return
 
             if not isinstance(new_document, dict):
-                QMessageBox.warning(self, "Advertencia", "El documento debe ser un objeto JSON")
+                QMessageBox.warning(self, "Advertencia", "El documento debe contener campos válidos")
                 return
+
+            new_document.pop("_id", None)
 
             collection = self.db[self.current_collection]
             try:

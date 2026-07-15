@@ -1449,56 +1449,13 @@ class SmokeFlowsTest(unittest.TestCase):
                     return None
                 return FakeTableItem(str(original_doc["_id"]))
 
-        class EditorDialog:
-            class DialogCode:
-                Accepted = 1
-
-            def __init__(self, *_args, **_kwargs):
-                self.accepted = True
-
-            def setWindowTitle(self, *_args, **_kwargs):
-                pass
-
-            def resize(self, *_args):
-                pass
-
-            def exec(self):
-                return self.DialogCode.Accepted
-
-            def accept(self):
-                self.accepted = True
-
-            def reject(self):
-                self.accepted = False
-
-        class EditorWidget:
-            def __init__(self):
-                self.value = ""
-
-            def setPlainText(self, value):
-                self.value = value
-
-            def toPlainText(self):
-                payload = json_util.loads(self.value)
-                payload["email"] = "ana.editada@example.com"
-                return json_util.dumps(payload)
-
-        class ButtonBox:
-            class StandardButton:
-                Save = 1
-                Cancel = 2
-
-            def __init__(self, *_args, **_kwargs):
-                self.accepted = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
-                self.rejected = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
-
         self.window.data_table = DataTable()
 
-        with patch.object(collection_views_mixin, "QDialog", EditorDialog), \
-             patch.object(collection_views_mixin, "QPlainTextEdit", EditorWidget), \
-             patch.object(collection_views_mixin, "QDialogButtonBox", ButtonBox), \
-             patch.object(collection_views_mixin, "QVBoxLayout", FakeVBoxLayout), \
-             patch.object(collection_views_mixin, "QLabel", lambda *_args, **_kwargs: SimpleNamespace()), \
+        dialog = SimpleNamespace(exec=lambda: QDialog.DialogCode.Accepted)
+        editor_doc = original_doc.copy()
+        editor_doc["email"] = "ana.editada@example.com"
+
+        with patch.object(self.window, "_create_document_editor_dialog", return_value=(dialog, SimpleNamespace(), lambda: editor_doc, lambda *_args, **_kwargs: None)), \
              patch.object(collection_views_mixin.QMessageBox, "warning", return_value=None), \
              patch.object(collection_views_mixin.QMessageBox, "critical", return_value=None):
             self.window.edit_selected_document()
@@ -1541,55 +1498,10 @@ class SmokeFlowsTest(unittest.TestCase):
         self.window.current_collection = "users"
         self.window.show_collection_data = lambda *_args, **_kwargs: None
 
-        class InsertDialog:
-            class DialogCode:
-                Accepted = 1
+        dialog = SimpleNamespace(exec=lambda: QDialog.DialogCode.Accepted)
+        new_doc = {"name": "Nuevo", "email": "nuevo@example.com"}
 
-            def __init__(self, *_args, **_kwargs):
-                self.accepted = True
-
-            def setWindowTitle(self, *_args, **_kwargs):
-                pass
-
-            def resize(self, *_args):
-                pass
-
-            def exec(self):
-                return self.DialogCode.Accepted
-
-            def accept(self):
-                self.accepted = True
-
-            def reject(self):
-                self.accepted = False
-
-        class EditorWidget:
-            def __init__(self):
-                self.value = ""
-
-            def setPlainText(self, value):
-                self.value = value
-
-            def toPlainText(self):
-                payload = json_util.loads(self.value)
-                payload["name"] = "Nuevo"
-                payload["email"] = "nuevo@example.com"
-                return json_util.dumps(payload)
-
-        class ButtonBox:
-            class StandardButton:
-                Save = 1
-                Cancel = 2
-
-            def __init__(self, *_args, **_kwargs):
-                self.accepted = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
-                self.rejected = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
-
-        with patch.object(collection_views_mixin, "QDialog", InsertDialog), \
-             patch.object(collection_views_mixin, "QPlainTextEdit", EditorWidget), \
-             patch.object(collection_views_mixin, "QDialogButtonBox", ButtonBox), \
-             patch.object(collection_views_mixin, "QVBoxLayout", FakeVBoxLayout), \
-             patch.object(collection_views_mixin, "QLabel", lambda *_args, **_kwargs: SimpleNamespace()), \
+        with patch.object(self.window, "_create_document_editor_dialog", return_value=(dialog, SimpleNamespace(), lambda: new_doc, lambda *_args, **_kwargs: None)), \
              patch.object(collection_views_mixin.QMessageBox, "warning", return_value=None), \
              patch.object(collection_views_mixin.QMessageBox, "critical", return_value=None):
             self.window.insert_new_document()
