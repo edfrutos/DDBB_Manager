@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QTableWidget, QTableWidgetItem, QSplitter, QTreeView,
     QTreeWidget, QTextEdit, QToolBar, QStyle, QListWidget, QCheckBox, QFrame,
     QProgressDialog, QGroupBox, QFileDialog, QRadioButton, QButtonGroup,
-    QTimeEdit, QScrollArea, QLayout
+    QTimeEdit, QScrollArea, QLayout, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot, QTimer, QTime, QDateTime, QDate
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QFont, QIcon, QAction
@@ -463,6 +463,8 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
         if not hasattr(self, 'data_table') or self.data_table is None or sip.isdeleted(self.data_table):
             self.data_table = QTableWidget()
             self.data_table.setAlternatingRowColors(True)
+            self.data_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            self.data_table.cellDoubleClicked.connect(lambda *_args: self.edit_selected_document())
         data_tab_layout.addWidget(self.data_table)
 
         data_actions_layout = QHBoxLayout()

@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from bson import json_util
 from bson.objectid import ObjectId
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
-from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QLineEdit
+from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QLineEdit, QAbstractItemView
 
 from gui.main_window import MainWindow
 import gui.mixins.database_management as db_mixin
@@ -987,6 +987,18 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertFalse(updated["active"])
         self.assertEqual(updated["profile"], {"city": "Madrid"})
         self.assertEqual(updated["tags"], ["mongo", "pyqt"])
+
+    def test_collection_data_table_is_not_directly_editable(self):
+        self.assertIsNotNone(self.window.data_table)
+        self.assertEqual(
+            self.window.data_table.editTriggers(),
+            QAbstractItemView.EditTrigger.NoEditTriggers,
+        )
+
+        called = {"value": False}
+        self.window.edit_selected_document = lambda: called.update(value=True)
+        self.window.data_table.cellDoubleClicked.emit(0, 0)
+        self.assertTrue(called["value"])
 
     def test_show_collections_populates_real_tree_widget(self):
         class BoollessDB:
