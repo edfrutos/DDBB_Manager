@@ -17,14 +17,22 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QComboBox,
+    QCheckBox,
     QMessageBox,
     QProgressDialog,
     QPushButton,
     QStyle,
+    QToolButton,
+    QWidget,
     QTableWidget,
     QTableWidgetItem,
     QTreeWidgetItem,
     QTreeView,
+    QLineEdit,
+    QSpinBox,
+    QDoubleSpinBox,
+    QDateTimeEdit,
     QVBoxLayout,
 )
 
@@ -50,17 +58,191 @@ class CollectionViewMixin:
         except Exception:
             return raw_text
 
-    def _create_document_editor_dialog(self, title, document=None, allow_id_edit=False):
+    def _value_kind_options(self):
+        return [
+            ("Texto", "string"),
+            ("Entero", "int"),
+            ("Decimal", "float"),
+            ("Booleano", "bool"),
+            ("Nulo", "null"),
+            ("ObjectId", "objectid"),
+            ("Fecha", "datetime"),
+            ("Objeto", "object"),
+            ("Lista", "array"),
+        ]
+
+    def _infer_value_kind(self, value):
+        try:
+            from bson.objectid import ObjectId
+        except Exception:
+            ObjectId = None
+
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "bool"
+        if isinstance(value, int) and not isinstance(value, bool):
+            return "int"
+        if isinstance(value, float):
+            return "float"
+        if ObjectId is not None and isinstance(value, ObjectId):
+            return "objectid"
+        if isinstance(value, datetime.datetime):
+            return "datetime"
+        if isinstance(value, dict):
+            return "object"
+        if isinstance(value, list):
+            return "array"
+        return "string"
+
+    def _empty_value_for_kind(self, kind):
+        if kind == "int":
+            return 0
+        if kind == "float":
+            return 0.0
+        if kind == "bool":
+            return False
+        if kind == "null":
+            return None
+        if kind == "object":
+            return {}
+        if kind == "array":
+            return []
+        return ""
+
+    def _complex_value_summary(self, value):
+        if isinstance(value, dict):
+            return f"Objeto ({len(value)} campos)"
+        if isinstance(value, list):
+            return f"Lista ({len(value)} elementos)"
+        return self._document_value_to_text(value)
+
+    def _parse_value_for_kind(self, kind, widget):
+        if kind == "string":
+            return widget.text()
+        if kind == "int":
+            return int(widget.value())
+        if kind == "float":
+            return float(widget.value())
+        if kind == "bool":
+            return bool(widget.isChecked())
+        if kind == "null":
+            return None
+        if kind == "objectid":
+            raw_value = widget.text().strip()
+            if not raw_value:
+                return None
+            from bson.objectid import ObjectId
+            return ObjectId(raw_value)
+        if kind == "datetime":
+            q_datetime = widget.dateTime().toPyDateTime()
+            if q_datetime.tzinfo is None:
+                return q_datetime
+            return q_datetime.replace(tzinfo=None)
+        if kind in ("object", "array"):
+            return widget.property("value_data")
+        return widget.text()
+
+    def _build_value_widget(self, kind, value, on_complex_edit=None):
+        if kind == "string":
+            widget = QLineEdit()
+            widget.setText("" if value is None else str(value))
+            return widget
+
+        if kind == "int":
+            widget = QSpinBox()
+            widget.setRange(-2147483648, 2147483647)
+            try:
+                widget.setValue(int(value))
+            except Exception:
+                widget.setValue(0)
+            return widget
+
+        if kind == "float":
+            widget = QDoubleSpinBox()
+            widget.setRange(-1e12, 1e12)
+            widget.setDecimals(8)
+            try:
+                widget.setValue(float(value))
+            except Exception:
+                widget.setValue(0.0)
+            return widget
+
+        if kind == "bool":
+            widget = QCheckBox()
+            widget.setChecked(bool(value))
+            return widget
+
+        if kind == "null":
+            widget = QLabel("Sin valor")
+            widget.setStyleSheet("color: #777;")
+            return widget
+
+        if kind == "objectid":
+            widget = QLineEdit()
+            widget.setText("" if value is None else self._document_value_to_text(value))
+            return widget
+
+        if kind == "datetime":
+            from PyQt6.QtCore import QDateTime
+
+            widget = QDateTimeEdit()
+            widget.setCalendarPopup(True)
+            widget.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+            if isinstance(value, datetime.datetime):
+                widget.setDateTime(QDateTime(value))
+            else:
+                widget.setDateTime(QDateTime.currentDateTime())
+            return widget
+
+        if kind in ("object", "array"):
+            container = QWidget()
+            layout = QHBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(6)
+
+            stored_value = value if value is not None else self._empty_value_for_kind(kind)
+            container.setProperty("value_data", stored_value)
+
+            summary = QLineEdit()
+            summary.setReadOnly(True)
+            summary.setText(self._complex_value_summary(stored_value))
+            summary.setProperty("value_data", stored_value)
+            layout.addWidget(summary, 1)
+
+            edit_button = QToolButton()
+            edit_button.setText("Editar")
+            edit_button.clicked.connect(lambda: on_complex_edit(summary, kind))
+            layout.addWidget(edit_button)
+            return container
+
+        widget = QLineEdit()
+        widget.setText("" if value is None else str(value))
+        return widget
+
+    def _create_document_editor_dialog(self, title, document=None, allow_id_edit=False, root_kind=None):
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
         dialog.resize(900, 650)
 
+        document_is_array = root_kind == "array" or (root_kind is None and isinstance(document, list))
+        if root_kind is None:
+            root_kind = "array" if document_is_array else "object"
+
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel("Edite los campos directamente en la tabla. Puede añadir o quitar filas para crear nuevos campos."))
+        if root_kind == "array":
+            layout.addWidget(QLabel("Edite los elementos de la lista de forma directa. Puede añadir o quitar filas y cambiar el tipo de cada elemento."))
+        else:
+            layout.addWidget(QLabel("Edite los campos directamente en la tabla. Puede añadir o quitar filas y usar tipos de dato visibles para cada valor."))
 
         table = QTableWidget()
-        table.setColumnCount(2)
-        table.setHorizontalHeaderLabels(["Campo", "Valor"])
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels([
+            "Índice" if root_kind == "array" else "Campo",
+            "Tipo",
+            "Valor",
+            "Editar",
+        ])
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -80,26 +262,122 @@ class CollectionViewMixin:
         )
         layout.addWidget(buttons)
 
-        def add_blank_row(field_name="", value_text=""):
+        def refresh_value_widget(row, kind, value=None):
+            current_item = table.cellWidget(row, 2)
+            if current_item is not None:
+                current_item.setParent(None)
+
+            if kind in ("object", "array"):
+                widget = self._build_value_widget(
+                    kind,
+                    value if value is not None else self._empty_value_for_kind(kind),
+                    on_complex_edit=edit_complex_value,
+                )
+            else:
+                widget = self._build_value_widget(kind, value if value is not None else self._empty_value_for_kind(kind))
+
+            table.setCellWidget(row, 2, widget)
+
+            edit_container = QWidget()
+            edit_layout = QHBoxLayout(edit_container)
+            edit_layout.setContentsMargins(0, 0, 0, 0)
+            edit_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            edit_button = QPushButton("Editar")
+            edit_button.setEnabled(kind in ("object", "array"))
+            edit_button.clicked.connect(lambda: edit_complex_value(table.cellWidget(row, 2), kind))
+            edit_layout.addWidget(edit_button)
+            table.setCellWidget(row, 3, edit_container)
+
+        def set_complex_value(widget, kind):
+            value_data = widget.property("value_data")
+            if value_data is None:
+                parent_widget = widget.parentWidget()
+                if parent_widget is not None:
+                    value_data = parent_widget.property("value_data")
+                if value_data is None:
+                    value_data = self._empty_value_for_kind(kind)
+            nested_kind = "array" if kind == "array" else "object"
+            nested_title = f"Editar {nested_kind} - {title}"
+            nested_dialog, _, nested_build_document, _ = self._create_document_editor_dialog(
+                nested_title,
+                document=value_data,
+                allow_id_edit=True,
+                root_kind=nested_kind,
+            )
+            if nested_dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            try:
+                new_value = nested_build_document()
+            except Exception as parse_error:
+                QMessageBox.critical(dialog, "Error", f"No se pudo leer el valor anidado: {str(parse_error)}")
+                return
+
+            if kind == "array" and not isinstance(new_value, list):
+                QMessageBox.warning(dialog, "Advertencia", "La lista debe seguir siendo una lista")
+                return
+            if kind == "object" and not isinstance(new_value, dict):
+                QMessageBox.warning(dialog, "Advertencia", "El objeto debe seguir siendo un diccionario")
+                return
+
+            widget.setProperty("value_data", new_value)
+            parent_widget = widget.parentWidget()
+            if parent_widget is not None:
+                parent_widget.setProperty("value_data", new_value)
+            widget.setText(self._complex_value_summary(new_value))
+
+        def edit_complex_value(widget, kind):
+            if widget is None:
+                return
+            set_complex_value(widget, kind)
+
+        def add_blank_row(field_name="", value=None):
             row = table.rowCount()
             table.insertRow(row)
 
-            field_item = QTableWidgetItem(str(field_name))
-            value_item = QTableWidgetItem(value_text)
-
-            if field_name == "_id" and not allow_id_edit:
+            inferred_kind = self._infer_value_kind(value)
+            if root_kind == "array":
+                field_item = QTableWidgetItem(str(row))
                 field_item.setFlags(field_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            else:
+                field_item = QTableWidgetItem(str(field_name))
+
+            if root_kind != "array" and field_name == "_id" and not allow_id_edit:
+                field_item.setFlags(field_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
             table.setItem(row, 0, field_item)
-            table.setItem(row, 1, value_item)
+
+            type_combo = QComboBox()
+            for label, _kind in self._value_kind_options():
+                type_combo.addItem(label, _kind)
+            type_combo.setCurrentIndex(max(0, type_combo.findData(inferred_kind)))
+            table.setCellWidget(row, 1, type_combo)
+
+            refresh_value_widget(row, inferred_kind, value)
+
+            def on_kind_changed(_label, current_row=row):
+                combo = table.cellWidget(current_row, 1)
+                if combo is None:
+                    return
+                current_kind = combo.currentData()
+                if current_kind in ("object", "array"):
+                    base_value = self._empty_value_for_kind(current_kind)
+                else:
+                    base_value = self._empty_value_for_kind(current_kind)
+                refresh_value_widget(current_row, current_kind, base_value)
+
+            type_combo.currentIndexChanged.connect(lambda *_args, current_row=row: on_kind_changed(None, current_row))
 
         def populate_rows():
             table.setRowCount(0)
-            if document:
-                ordered_fields = ["_id"] + [key for key in document.keys() if key != "_id"]
-                for field in ordered_fields:
-                    add_blank_row(field, self._document_value_to_text(document.get(field, "")))
+            if document is not None:
+                if root_kind == "array":
+                    for idx, value in enumerate(document):
+                        add_blank_row(str(idx), value)
+                else:
+                    ordered_fields = ["_id"] + [key for key in document.keys() if key != "_id"]
+                    for field in ordered_fields:
+                        add_blank_row(field, document.get(field, None))
             else:
                 add_blank_row()
 
@@ -109,25 +387,37 @@ class CollectionViewMixin:
                 table.removeRow(selected_row)
 
         def build_document():
+            if root_kind == "array":
+                updated_list = []
+                for row in range(table.rowCount()):
+                    kind_combo = table.cellWidget(row, 1)
+                    value_widget = table.cellWidget(row, 2)
+                    if kind_combo is None or value_widget is None:
+                        continue
+                    kind = kind_combo.currentData()
+                    updated_list.append(self._parse_value_for_kind(kind, value_widget))
+                return updated_list
+
             updated_document = {}
             for row in range(table.rowCount()):
                 field_item = table.item(row, 0)
-                value_item = table.item(row, 1)
-                if field_item is None:
+                kind_combo = table.cellWidget(row, 1)
+                value_widget = table.cellWidget(row, 2)
+                if field_item is None or kind_combo is None or value_widget is None:
                     continue
 
                 field_name = field_item.text().strip()
                 if not field_name:
                     continue
 
-                value_text = value_item.text() if value_item is not None else ""
+                kind = kind_combo.currentData()
                 if field_name == "_id" and document is not None and not allow_id_edit:
                     updated_document["_id"] = document["_id"]
                     continue
 
-                updated_document[field_name] = self._editor_text_to_value(value_text)
+                updated_document[field_name] = self._parse_value_for_kind(kind, value_widget)
 
-            if document is not None and "_id" in document and "_id" not in updated_document:
+            if document is not None and root_kind != "array" and "_id" in document and "_id" not in updated_document:
                 updated_document["_id"] = document["_id"]
 
             return updated_document

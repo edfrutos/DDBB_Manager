@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from bson import json_util
 from bson.objectid import ObjectId
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
-from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
+from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QLineEdit
 
 from gui.main_window import MainWindow
 import gui.mixins.database_management as db_mixin
@@ -951,6 +951,42 @@ class SmokeFlowsTest(unittest.TestCase):
         self.window.show_status_message = lambda *_args, **_kwargs: None
         self.window.refresh_current_collection_relations()
         self.assertEqual(refreshed["called"], "users")
+
+    def test_document_editor_roundtrip_uses_typed_widgets(self):
+        document = {
+            "_id": ObjectId("68b0292c25470b54385c4738"),
+            "name": "Ana",
+            "age": 33,
+            "active": True,
+            "profile": {"city": "Madrid"},
+            "tags": ["mongo", "pyqt"],
+        }
+
+        dialog, table, build_document, _add_row = self.window._create_document_editor_dialog(
+            "Editar registro",
+            document=document,
+            allow_id_edit=False,
+        )
+        self.assertIsNotNone(dialog)
+        self.assertEqual(table.rowCount(), 6)
+
+        for row in range(table.rowCount()):
+            field = table.item(row, 0).text()
+            widget = table.cellWidget(row, 2)
+            if field == "name":
+                widget.setText("Ana editada")
+            elif field == "age":
+                widget.setValue(41)
+            elif field == "active":
+                widget.setChecked(False)
+
+        updated = build_document()
+        self.assertEqual(updated["_id"], document["_id"])
+        self.assertEqual(updated["name"], "Ana editada")
+        self.assertEqual(updated["age"], 41)
+        self.assertFalse(updated["active"])
+        self.assertEqual(updated["profile"], {"city": "Madrid"})
+        self.assertEqual(updated["tags"], ["mongo", "pyqt"])
 
     def test_show_collections_populates_real_tree_widget(self):
         class BoollessDB:
