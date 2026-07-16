@@ -7,7 +7,8 @@ Aplicación de escritorio en Python y PyQt6 para administrar bases de datos Mong
 
 - Conexión manual o automática a MongoDB y selección de base de datos.
 - Exploración de bases de datos y colecciones con diferentes modos de agrupación.
-- Consulta, creación, edición y eliminación de documentos.
+- Consulta, creación, edición y eliminación de documentos con edición directa de campos desde la vista tabular.
+- Detección de relaciones entre colecciones, navegación a colecciones relacionadas y refresco manual de relaciones.
 - Creación, consulta y reconstrucción de índices.
 - Importación y exportación de colecciones.
 - Copias de seguridad, restauración y tareas programadas.
@@ -92,7 +93,7 @@ El mapa compacto de flujos está en [`docs/flow_decalogo.md`](docs/flow_decalogo
 
 ### Explorar datos
 
-Conéctese a MongoDB, seleccione una base de datos y abra la vista de colecciones. Desde ella puede inspeccionar documentos y metadatos, cambiar el modo de agrupación y actualizar la vista.
+Conéctese a MongoDB, seleccione una base de datos y abra la vista de colecciones. Desde ella puede inspeccionar documentos y metadatos, cambiar el modo de agrupación, editar registros sin tocar JSON y seguir relaciones entre colecciones relacionadas.
 
 ### Ejecutar una consulta
 
@@ -148,13 +149,11 @@ venv/bin/python -m py_compile \
   core/*.py
 ```
 
-Actualmente el repositorio no contiene una suite de pruebas automatizadas. Los cambios de interfaz y operaciones MongoDB deben validarse también de forma manual contra una base de datos de prueba.
-
-Como apoyo mínimo, existe un smoke test en `tests/test_smoke_flows.py` que valida los flujos básicos de creación, consulta, cambio de base de datos, backup, restore, gestión de contraseñas, edición/borrado de usuarios, importación/exportación, vistas de colección y modos de agrupación, salto árbol→tabla de datos, metadatos e historial de acceso, descubrimiento de propietarios, estadísticas globales, integridad y borrado usando dobles de base de datos.
+La base de pruebas principal es `tests/test_smoke_flows.py`, que valida los flujos básicos de creación, consulta, cambio de base de datos, backup, restore, gestión de contraseñas, edición/borrado de usuarios, importación/exportación, vistas de colección y modos de agrupación, salto árbol→tabla de datos, metadatos e historial de acceso, descubrimiento de propietarios, estadísticas globales, integridad, borrado y navegación entre relaciones usando dobles de base de datos.
 
 ## Estado del proyecto
 
-La fase activa es una refactorización incremental de `gui/main_window.py`. Los dominios de mantenimiento, respaldo, usuarios, importación/exportación, bases de datos, índices, ayuda/tutorial, vistas de colecciones y consultas ya están separados en mixins. La lógica de metadatos, detección de contenido y descripción de campos de colecciones vive en `CollectionViewMixin`, los propietarios y la creación/borrado de colecciones ya están en `DatabaseManagementMixin`, y la validación de integridad vive en `MaintenanceMixin`. Lo que queda en `MainWindow` son principalmente helpers de ventana y pegamento de UI.
+La fase activa es una refactorización incremental de `gui/main_window.py`. Los dominios de mantenimiento, respaldo, usuarios, importación/exportación, bases de datos, índices, ayuda/tutorial, vistas de colecciones y consultas ya están separados en mixins. La lógica de metadatos, detección de contenido, edición de registros y navegación por relaciones entre colecciones vive en `CollectionViewMixin`, los propietarios y la creación/borrado de colecciones ya están en `DatabaseManagementMixin`, y la validación de integridad vive en `MaintenanceMixin`. Lo que queda en `MainWindow` son principalmente helpers de ventana y pegamento de UI.
 
 ## Seguridad
 

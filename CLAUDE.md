@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Qué es este repositorio
 
-Herramienta de administración de MongoDB (local y Atlas) escrita en Python con interfaz gráfica PyQt6. Permite conexión, CRUD de documentos, gestión de bases de datos/colecciones/índices, verificación de integridad, estadísticas, gestión de usuarios y limpieza/optimización. Destino: app de escritorio macOS.
+Herramienta de administración de MongoDB (local y Atlas) escrita en Python con interfaz gráfica PyQt6. Permite conexión, CRUD de documentos con edición directa en tabla, gestión de bases de datos/colecciones/índices, navegación por relaciones entre colecciones, verificación de integridad, estadísticas, gestión de usuarios y limpieza/optimización. Destino: app de escritorio macOS.
 
 ## Estructura del proyecto
 
@@ -45,7 +45,7 @@ Mixins funcionales ya extraídos de `MainWindow`:
 - **`DatabaseManagementMixin`**: listado/cambio de bases de datos, estadísticas globales, propietarios, detalles y edición de campos.
 - **`IndexManagementMixin`**: consulta, creación y reconstrucción de índices de colecciones.
 - **`HelpMixin`**: pantalla de ayuda/tutorial y cuadro "Acerca de".
-- **`CollectionViewMixin`**: árbol de colecciones, navegación, recreación de la vista y carga de documentos.
+- **`CollectionViewMixin`**: árbol de colecciones, navegación, recreación de la vista, carga de documentos, edición de celdas/campos y relaciones entrantes/salientes entre colecciones.
 - **`QueryMixin`**: ejecución de consultas MongoDB desde el editor de consultas.
 
 ### `gui/dialogs/`
@@ -59,7 +59,7 @@ Clase `DatabaseManager` con lógica de negocio: `connect`, `set_database`, CRUD,
 ## Estado arquitectónico actual
 
 - La fase activa es la reducción incremental de `gui/main_window.py` mediante extracción a `gui/dialogs/` y `gui/mixins/`.
-- `MainWindow` sigue siendo el coordinador de UI y conexión, pero parte de los dominios de mantenimiento, respaldo, usuarios, import/export, bases de datos e índices ya vive fuera del archivo principal.
+- `MainWindow` sigue siendo el coordinador de UI y conexión, pero parte de los dominios de mantenimiento, respaldo, usuarios, import/export, bases de datos, índices y exploración de colecciones ya vive fuera del archivo principal.
 - Lo que queda en `MainWindow` son principalmente helpers de ventana, inicialización de UI y cierre. No fuerces más mixins si no se gana claridad real.
 - `core/db_manager.py` continúa siendo referencia/CLI independiente; no modificarlo para cambios de GUI salvo que se planifique explícitamente la integración de capas.
 - El orden de trabajo operativo vive en `docs/flow_decalogo.md`. Seguir ese mapa cuando haya que priorizar pruebas o nuevas mejoras.
@@ -79,7 +79,6 @@ venv/bin/python -m py_compile gui/main_window.py
 # Verificar sintaxis de los módulos principales
 venv/bin/python -m py_compile main_gui.py gui/*.py gui/mixins/*.py gui/dialogs/*.py core/*.py
 
-# Smoke test de los flujos básicos sin depender de Atlas
 venv/bin/python -m unittest tests.test_smoke_flows -q
 
 # Instalar dependencias en el venv
@@ -98,5 +97,5 @@ venv/bin/pip install -r requirements.txt
 - **Operaciones destructivas**: `drop_collection`, `drop_database`, `cleanup_user_databases`, `delete_document` borran datos de forma irreversible. Conservar todas las confirmaciones existentes.
 - Los warnings de Pyright sobre imports de PyQt6/pymongo son esperados cuando el linter usa el Python del sistema (3.14) en lugar del venv (3.12).
 - `core/` existe para futura integración incremental. No modificar `core/db_manager.py` para cambios en la GUI — son capas independientes hasta que se fusionen explícitamente.
-- Existe `tests/test_smoke_flows.py` para validar los flujos básicos de la UI con dobles en memoria cuando no se puede llegar a MongoDB real. Cubre creación, consulta, cambio de base de datos, backup, restore, gestión de contraseñas, edición/borrado de usuarios, importación/exportación, vistas de colección y modos de agrupación, salto árbol→tabla de datos, metadatos e historial de acceso, descubrimiento de propietarios, estadísticas globales, integridad y borrado.
+- Existe `tests/test_smoke_flows.py` para validar los flujos básicos de la UI con dobles en memoria cuando no se puede llegar a MongoDB real. Cubre creación, consulta, cambio de base de datos, backup, restore, gestión de contraseñas, edición/borrado de usuarios, importación/exportación, vistas de colección y modos de agrupación, salto árbol→tabla de datos, metadatos e historial de acceso, descubrimiento de propietarios, estadísticas globales, integridad, borrado, edición de registros y navegación por relaciones.
 - La integración con WakaTime es opcional y depende de `WAKATIME_ENABLED=true` junto con `WAKATIME_API_KEY`. Si no están definidos, no debe afectar a la ejecución ni a los tests.

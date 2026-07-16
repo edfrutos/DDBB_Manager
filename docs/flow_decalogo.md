@@ -44,6 +44,9 @@ Valida:
 - árbol de colecciones
 - modos de agrupación
 - navegación visual
+- edición directa de registros y campos
+- relaciones entrantes/salientes entre colecciones
+- refresco manual de relaciones
 
 ## 4. Metadatos
 
