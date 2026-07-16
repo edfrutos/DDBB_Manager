@@ -329,6 +329,18 @@ class CollectionViewMixin:
             print(f"Error al abrir la relación de colección: {e}")
             traceback.print_exc()
 
+    def refresh_current_collection_relations(self):
+        """Refresh relation information for the currently selected collection."""
+        try:
+            if self.db is None or not getattr(self, "current_collection", None):
+                return
+
+            self.load_collection_relations(self.current_collection)
+            self.show_status_message(f"Relaciones actualizadas para {self.current_collection}")
+        except Exception as e:
+            print(f"Error al refrescar relaciones de colección: {e}")
+            traceback.print_exc()
+
     def show_collections(self):
         """Mostrar las colecciones de la base de datos en el árbol, según el modo de vista activo."""
         if self.db is None:

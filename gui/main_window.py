@@ -498,6 +498,16 @@ Para comenzar, utilice el menú 'Conexión' para conectarse a una base de datos.
         
         tables_label = QLabel("Mapeo de Tablas para esta Colección:")
         tables_layout.addWidget(tables_label)
+
+        relations_actions = QHBoxLayout()
+        relations_actions.addStretch()
+
+        self.refresh_relations_button = QPushButton("Actualizar relaciones")
+        self.refresh_relations_button.setToolTip("Recalcular las relaciones detectadas para la colección seleccionada")
+        self.refresh_relations_button.clicked.connect(self.refresh_current_collection_relations)
+        relations_actions.addWidget(self.refresh_relations_button)
+
+        tables_layout.addLayout(relations_actions)
         
         self.tables_tree = QTreeWidget()
         self.tables_tree.setHeaderLabels(["Tabla", "Tipo", "Campos"])
@@ -1161,6 +1171,9 @@ Ejemplos de consultas:
 
     def open_relation_collection(self, item, column=0):
         return super().open_relation_collection(item, column)
+
+    def refresh_current_collection_relations(self):
+        return super().refresh_current_collection_relations()
     
     def get_field_description(self, field_name):
         return super().get_field_description(field_name)

@@ -946,6 +946,12 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(opened.get("collection"), "users")
         self.assertEqual(self.window.current_collection, "users")
 
+        refreshed = {"called": False}
+        self.window.load_collection_relations = lambda collection_name: refreshed.update({"called": collection_name})
+        self.window.show_status_message = lambda *_args, **_kwargs: None
+        self.window.refresh_current_collection_relations()
+        self.assertEqual(refreshed["called"], "users")
+
     def test_show_collections_populates_real_tree_widget(self):
         class BoollessDB:
             def __init__(self, backing):
