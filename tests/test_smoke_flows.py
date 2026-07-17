@@ -988,6 +988,37 @@ class SmokeFlowsTest(unittest.TestCase):
         self.assertEqual(updated["profile"], {"city": "Madrid"})
         self.assertEqual(updated["tags"], ["mongo", "pyqt"])
 
+    def test_document_editor_nested_value_roundtrip(self):
+        document = {
+            "_id": ObjectId("68b0292c25470b54385c4738"),
+            "profile": {"city": "Madrid", "zip": "28001"},
+            "tags": ["mongo", "pyqt"],
+        }
+
+        dialog, table, build_document, _add_row = self.window._create_document_editor_dialog(
+            "Editar registro",
+            document=document,
+            allow_id_edit=False,
+        )
+
+        profile_row = next(
+            row for row in range(table.rowCount())
+            if table.item(row, 0).text() == "profile"
+        )
+        tags_row = next(
+            row for row in range(table.rowCount())
+            if table.item(row, 0).text() == "tags"
+        )
+
+        profile_widget = table.cellWidget(profile_row, 2)
+        tags_widget = table.cellWidget(tags_row, 2)
+        self.window._apply_complex_widget_value(profile_widget, "object", {"city": "Barcelona", "zip": "08001"})
+        self.window._apply_complex_widget_value(tags_widget, "array", ["mongo", "qt", "gui"])
+
+        updated = build_document()
+        self.assertEqual(updated["profile"], {"city": "Barcelona", "zip": "08001"})
+        self.assertEqual(updated["tags"], ["mongo", "qt", "gui"])
+
     def test_collection_data_table_is_not_directly_editable(self):
         self.assertIsNotNone(self.window.data_table)
         self.assertEqual(

@@ -220,6 +220,20 @@ class CollectionViewMixin:
         widget.setText("" if value is None else str(value))
         return widget
 
+    def _apply_complex_widget_value(self, widget, kind, new_value):
+        if widget is None:
+            return
+
+        widget.setProperty("value_data", new_value)
+        parent_widget = widget.parentWidget()
+        if parent_widget is not None:
+            parent_widget.setProperty("value_data", new_value)
+        display_widget = widget
+        if not hasattr(display_widget, "setText"):
+            display_widget = widget.findChild(QLineEdit)
+        if display_widget is not None and hasattr(display_widget, "setText"):
+            display_widget.setText(self._complex_value_summary(new_value))
+
     def _create_document_editor_dialog(self, title, document=None, allow_id_edit=False, root_kind=None):
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
@@ -320,11 +334,7 @@ class CollectionViewMixin:
                 QMessageBox.warning(dialog, "Advertencia", "El objeto debe seguir siendo un diccionario")
                 return
 
-            widget.setProperty("value_data", new_value)
-            parent_widget = widget.parentWidget()
-            if parent_widget is not None:
-                parent_widget.setProperty("value_data", new_value)
-            widget.setText(self._complex_value_summary(new_value))
+            self._apply_complex_widget_value(widget, kind, new_value)
 
         def edit_complex_value(widget, kind):
             if widget is None:
